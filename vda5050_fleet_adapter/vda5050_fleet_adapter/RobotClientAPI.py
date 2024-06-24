@@ -3,6 +3,8 @@ import json
 import time
 import uuid
 from datetime import datetime
+import yaml
+import os
 
 class RobotAPI:
     def __init__(self, config_yaml):
@@ -23,6 +25,7 @@ class RobotAPI:
         self.client.connect("127.0.0.1", 1883, 60)
         self.client.loop_start()
         self.robot_position = []
+        self.factsheets_folder = "factsheets"
     
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
@@ -39,6 +42,8 @@ class RobotAPI:
             self.handle_state_message(msg.payload.decode())
         elif msg.topic.endswith("/visualization"):
             self.handle_visualization_message(msg.payload.decode())
+        elif msg.topic.endswith("/factsheet"):
+            self.handle_factsheet_message(msg.payload.decode())
 
     def check_connection(self):
         return True
@@ -73,13 +78,110 @@ class RobotAPI:
 
         except json.JSONDecodeError:
             print("Error decoding JSON message")
+    
+    def handle_factsheet_message(self, payload):
+        try:
+            factsheet = json.loads(payload)
+            serial_number = factsheet.get('serialNumber')
+            if not serial_number:
+                print("Factsheet does not contain a serial number.")
+                return
             
+            json_filename = os.path.join(self.factsheets_folder, f"{serial_number}.json")
+            yaml_filename = os.path.join(self.factsheets_folder, f"{serial_number}.yaml")
+            
+            if not os.path.exists(json_filename) or not os.path.exists(yaml_filename):
+                with open(json_filename, 'w') as json_file:
+                    json.dump(factsheet, json_file, indent=2)
+                
+                yaml_data = self.convert_factsheet_to_yaml(factsheet)
+                with open(yaml_filename, 'w') as yaml_file:
+                    yaml_file.write(yaml_data)
+                
+                print(f"New factsheet saved as {json_filename} and {yaml_filename}")
+            else:
+                print(f"Factsheet for {serial_number} already exists.")
+        except json.JSONDecodeError:
+            print("Error decoding JSON message")
+
+    def convert_factsheet_to_yaml(self, factsheet):
+        rmf_fleet_config = {
+            'rmf_fleet': {
+                'name': factsheet.get('manufacturer', 'UNKNOWN'),
+                'limits': {
+                    'linear': [
+                        factsheet['physicalParameters'].get('speedMax', 0.0),
+                        factsheet['physicalParameters'].get('accelerationMax', 0.0)
+                    ],
+                    'angular': [0.6, 2.0]  
+                },
+                'profile': {
+                    'footprint': 0.3,  
+                    'vicinity': 0.5  
+                },
+                'reversible': True,  
+                'battery_system': {
+                    'voltage': 12.0,  
+                    'capacity': 24.0,  
+                    'charging_current': 5.0  
+                },
+                'mechanical_system': {
+                    'mass': factsheet['typeSpecification'].get('maxLoadMass', 0.0),
+                    'moment_of_inertia': 10.0,  
+                    'friction_coefficient': 0.22  
+                },
+                'ambient_system': {
+                    'power': 20.0  
+                },
+                'tool_system': {
+                    'power': 0.0  
+                },
+                'recharge_threshold': 0.10,  
+                'recharge_soc': 1.0,  
+                'publish_fleet_state': 20.0,  
+                'account_for_battery_drain': True,  
+                'task_capabilities': {
+                    'loop': True,  
+                    'delivery': True,  
+                    'clean': False  
+                },
+                'actions': ["teleop"],  
+                'robots': {
+                    factsheet.get('serialNumber', 'UNKNOWN'): {
+                        'charger': "start"  
+                    }
+                }
+            }
+        }
+        return yaml.dump(rmf_fleet_config, default_flow_style=False)
+
     def check_robot_connection(self, robot_name: str):
         return True
 
     def check_broker_connection(self):
         return True
 
+    def send_factsheet_request(self, robot_name: str):
+        factsheet_request_action = {
+            "actionId": str(uuid.uuid4()),  
+            "actionType": "factsheetRequest",
+            #"blockingType": "SOFT",
+            "actionParameters": []
+        }
+
+        instant_action = {
+            "headerId": int(time.time()),
+            "timestamp": datetime.utcnow().isoformat() + 'Z',
+            "version": "2.0.0",
+            "manufacturer": "OSRF",
+            "serialNumber": robot_name,
+            "actions": [factsheet_request_action]
+        }
+        print(f"Requesting factsheet from robot {robot_name}")
+        print(f"Instant action: {instant_action}")
+        self.client.publish(f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
+        return True
+        
     def navigate(
         self,
         robot_name: str,
@@ -242,7 +344,7 @@ class RobotAPI:
         }
         print(f"Stopping robot {robot_name}")
         print(f"Instant action: {instant_action}")
-        self.client.publish(f"{self.prefix}/{robot_name}/instantAction", json.dumps(instant_action))
+        self.client.publish(f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
         return True
 
     def position(self, robot_name: str):

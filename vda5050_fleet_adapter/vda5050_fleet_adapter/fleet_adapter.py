@@ -382,6 +382,7 @@ def update_robot(robot: RobotAdapter):
             robot.configuration,
             robot.make_callbacks()
         )
+        robot.api.send_factsheet_request(robot.name)
         return
 
     robot.update(state)
