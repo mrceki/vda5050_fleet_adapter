@@ -25,6 +25,7 @@ class RobotAPI:
         self.client.connect("127.0.0.1", 1883, 60)
         self.client.loop_start()
         self.robot_position = []
+        self.last_node_theta = None
         self.factsheets_folder = "factsheets"
     
     def on_connect(self, client, userdata, flags, rc):
@@ -211,11 +212,16 @@ class RobotAPI:
             return
 
         order_nodes = []
-        for node in nodes:
+        for i, node in enumerate(nodes):
+            if i == 0 and node[0] == self.last_destination_node:
+                node_theta = self.last_node_theta if self.last_node_theta is not None else pose[2]
+            else:
+                node_theta = pose[2]
+
             node_position = {
                 "x": node[1][0],
                 "y": node[1][1],
-                "theta": 0,
+                "theta": node_theta,
                 "mapId": "map",
                 "allowedDeviationXY": 0.6,
                 "allowed_deviation_theta": 3.141592653589793
@@ -237,7 +243,7 @@ class RobotAPI:
             order_edges.append({
                 "edgeId": str(edge),
                 "released": True,
-                "sequenceId": sequence_id +1,
+                "sequenceId": sequence_id + 1,
                 "startNodeId": start_node_id,
                 "endNodeId": end_node_id,
                 "actions": []
@@ -259,6 +265,7 @@ class RobotAPI:
         print(f"Order published: {order}")
         self.last_order[robot_name] = {"orderId": orderId, "orderUpdateId": orderUpdateId}
         self.last_destination_node = nodes[-1][0] if nodes else None
+        self.last_node_theta = pose[2] if nodes and not nodes[-1] == nodes[0] else None  
         return True
 
     def get_sequence_id(self, task_id, entity_type, entity_id):
