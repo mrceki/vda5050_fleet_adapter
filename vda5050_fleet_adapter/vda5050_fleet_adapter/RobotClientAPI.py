@@ -213,8 +213,8 @@ class RobotAPI:
         order_nodes = []
         for node in nodes:
             node_position = {
-                "x": node[1][0] - (10.034804254049215 * 1),
-                "y": node[1][1] - (-9.220091158197453 * 1),
+                "x": node[1][0],
+                "y": node[1][1],
                 "theta": 0,
                 "mapId": "map",
                 "allowedDeviationXY": 0.6,
@@ -323,14 +323,14 @@ class RobotAPI:
             "actionType": "cancelOrder",
             "blockingType": "HARD",
             "actionParameters": [
-                {
-                    "key": "orderId",
-                    "value": self.last_order[robot_name]["orderId"]
-                },
-                {
-                    "key": "orderUpdateId",
-                    "value": self.last_order[robot_name]["orderUpdateId"]
-                }
+                # {
+                #     "key": "orderId",
+                #     "value": self.last_order[robot_name]["orderId"]
+                # },
+                # {
+                #     "key": "orderUpdateId",
+                #     "value": self.last_order[robot_name]["orderUpdateId"]
+                # }
             ]
         }
 
@@ -338,7 +338,7 @@ class RobotAPI:
             "headerId": int(time.time()),
             "timestamp": datetime.utcnow().isoformat() + 'Z',
             "version": "2.0.0",
-            "manufacturer": "ALTINAY",
+            "manufacturer": "OSRF",
             "serialNumber": robot_name,
             "actions": [stop_action]
         }

@@ -28,9 +28,9 @@ def compute_transforms(level, coords, node=None):
     """Get transforms between RMF and robot coordinates."""
     rmf_coords = coords['rmf']
     robot_coords = coords['robot']
-    tf = nudged.estimate(robot_coords, rmf_coords)
+    tf = nudged.estimate(rmf_coords, robot_coords)
     if node:
-        mse = nudged.estimate_error(tf, robot_coords, rmf_coords)
+        mse = nudged.estimate_error(tf, rmf_coords, robot_coords)
         node.get_logger().info(
             f"Transformation error estimate for {level}: {mse}"
         )
@@ -74,6 +74,31 @@ def create_graph_from_nav(nodes, edges):
                           (nodes[end_node]['x'], nodes[end_node]['y']))
         graph.add_edge(start_node, end_node, weight=weight)
     return graph
+
+def transform_node(x, y, rotation, scale, translation):
+    # Apply rotation
+    cos_theta = math.cos(rotation)
+    sin_theta = math.sin(rotation)
+    x_rotated = x * cos_theta - y * sin_theta
+    y_rotated = x * sin_theta + y * cos_theta
+
+    # Apply scaling
+    x_scaled = x_rotated * scale
+    y_scaled = y_rotated * scale
+
+    # Apply translation
+    x_transformed = x_scaled + translation[0]
+    y_transformed = y_scaled + translation[1]
+
+    return x_transformed, y_transformed
+
+def apply_transformations(nodes, rotation, scale, translation):
+    for name, node in nodes.items():
+        x_transformed, y_transformed = transform_node(
+            node['x'], node['y'], rotation, scale, translation)
+        node['x'] = x_transformed
+        node['y'] = y_transformed
+        print(f"Transformed node {name}: x={x_transformed}, y={y_transformed}")
 
 def find_path(graph, start, goal):
     try:
@@ -144,6 +169,8 @@ def main(argv=sys.argv):
         print(f"RMF coordinates: {coords['rmf']}")
         tf = compute_transforms(level, coords, node)
         fleet_config.add_robot_coordinates_transformation(level, tf)
+        apply_transformations(nodes, tf.rotation, tf.scale, tf.translation)
+        
     fleet_handle = adapter.add_easy_fleet(fleet_config)
 
     fleet_mgr_yaml = config_yaml['fleet_manager']
@@ -183,36 +210,12 @@ def main(argv=sys.argv):
     rclpy_executor = SingleThreadedExecutor()
     rclpy_executor.add_node(node)
 
-    def bid_response_callback(msg):
-        robot_name = msg.proposal.expected_robot_name
-        if robot_name in robots:
-            robots[robot_name].task_id = msg.task_id
-        print(f"Received bid response for robot [{robot_name}] with task_id [{msg.task_id}]")
-
-    bid_response_sub = node.create_subscription(
-        BidResponse,
-        '/rmf_task/bid_response',
-        bid_response_callback,
-        10
-    )
-
-    fleet_states_sub = node.create_subscription(
-        FleetState,
-        '/fleet_states',
-        lambda msg: fleet_states_callback(msg, robots),
-        10
-    )
-
     rclpy_executor.spin()
 
     node.destroy_node()
     rclpy_executor.shutdown()
     rclpy.shutdown()
 
-def fleet_states_callback(msg, robots):
-    for robot in msg.robots:
-        if robot.name in robots:
-            robots[robot.name].update_position(robot.location)
 
 class RobotAdapter:
     def __init__(
@@ -245,10 +248,8 @@ class RobotAdapter:
         self.last_nodes = []
         self.last_edges = []
 
-    def update_position(self, location):
-        self.position = (location.x, location.y)
-
     def update(self, state):
+        self.position = state.position  
         activity_identifier = None
         if self.execution:
             if self.api.is_command_completed(self.name):
@@ -272,7 +273,7 @@ class RobotAdapter:
 
     def navigate(self, destination, execution):
         self.execution = execution
-        new_goal_node = self.get_nearest_node([destination.position[0] - 10.034804254049215, destination.position[1] + 9.220091158197453])
+        new_goal_node = self.get_nearest_node([destination.position[0], destination.position[1]])
 
         if self.task_id == self.last_task_id and self.last_nodes:
             # Use the last goal node as the base node
@@ -368,7 +369,6 @@ def update_robot(robot: RobotAdapter):
     data = robot.api.get_data(robot.name)
     if data is None:
         return
-
     state = rmf_easy.RobotState(
         data.map,
         data.position,
