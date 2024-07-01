@@ -55,12 +55,17 @@ def parse_nav_graph(nav_graph_path):
 
     edges = {}
     for i, lane in enumerate(nav_graph['levels']['L1']['lanes']):
-        edge_name = f'edge{i}'
         start_node = list(nodes.keys())[lane[0]]
         end_node = list(nodes.keys())[lane[1]]
+        # Create an edge for the direction from start_node to end_node
+        edge_name = f'edge{i}_a'
         edges[edge_name] = {'start': start_node, 'end': end_node, 'attributes': lane[2]}
+        # Create an edge for the direction from end_node to start_node
+        edge_name = f'edge{i}_b'
+        edges[edge_name] = {'start': end_node, 'end': start_node, 'attributes': lane[2]}
     
     return nodes, edges
+
 
 def distance(p1, p2):
     return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
@@ -206,6 +211,19 @@ def main(argv=sys.argv):
 
     update_thread = threading.Thread(target=update_loop, args=())
     update_thread.start()
+
+    def bid_response_callback(msg):
+        robot_name = msg.proposal.expected_robot_name
+        if robot_name in robots:
+            robots[robot_name].task_id = msg.task_id
+        print(f"Received bid response for robot [{robot_name}] with task_id [{msg.task_id}]")
+
+    bid_response_sub = node.create_subscription(
+        BidResponse,
+        '/rmf_task/bid_response',
+        bid_response_callback,
+        10
+    )
 
     rclpy_executor = SingleThreadedExecutor()
     rclpy_executor.add_node(node)
