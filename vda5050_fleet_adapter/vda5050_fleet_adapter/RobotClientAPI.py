@@ -215,8 +215,10 @@ class RobotAPI:
         for i, node in enumerate(nodes):
             if i == 0 and node[0] == self.last_destination_node:
                 node_theta = self.last_node_theta if self.last_node_theta is not None else pose[2]
+                sequence_id = self.get_sequence_id(task_id, "nodes", node[0], is_base_node=True)
             else:
                 node_theta = pose[2]
+                sequence_id = self.get_sequence_id(task_id, "nodes", node[0], is_base_node=False)
 
             node_position = {
                 "x": node[1][0],
@@ -226,7 +228,6 @@ class RobotAPI:
                 "allowedDeviationXY": 0.6,
                 "allowed_deviation_theta": 3.141592653589793
             }
-            sequence_id = self.get_sequence_id(task_id, "nodes", node[0])
             order_nodes.append({
                 "nodeId": node[0],
                 "sequenceId": sequence_id,
@@ -268,7 +269,7 @@ class RobotAPI:
         self.last_node_theta = pose[2] if nodes and not nodes[-1] == nodes[0] else None  
         return True
 
-    def get_sequence_id(self, task_id, entity_type, entity_id):
+    def get_sequence_id(self, task_id, entity_type, entity_id, is_base_node=False):
         """
         Get sequence ID for a given node or edge in a task.
 
@@ -276,16 +277,25 @@ class RobotAPI:
             task_id (str): The task ID.
             entity_type (str): Type of the entity ('nodes' or 'edges').
             entity_id (str): ID of the entity (node ID or edge ID).
+            is_base_node (bool): Whether the node is the base node (starting point).
 
         Returns:
             int: The sequence ID.
         """
-        if entity_id in self.sequence_map[task_id][entity_type]:
-            return self.sequence_map[task_id][entity_type][entity_id]
+        if is_base_node and entity_id == self.last_destination_node:
+            # If it's the base node and matches the last destination node, keep the same sequence ID
+            for key, value in self.sequence_map[task_id][entity_type].items():
+                if key.startswith(entity_id):
+                    return value
+
+        unique_entity_id = f"{entity_id}_{len(self.sequence_map[task_id][entity_type])}"
+        
+        if unique_entity_id in self.sequence_map[task_id][entity_type]:
+            return self.sequence_map[task_id][entity_type][unique_entity_id]
         else:
             existing_ids = list(self.sequence_map[task_id][entity_type].values())
             new_sequence_id = max(existing_ids) + 2 if existing_ids else 0
-            self.sequence_map[task_id][entity_type][entity_id] = new_sequence_id
+            self.sequence_map[task_id][entity_type][unique_entity_id] = new_sequence_id
             return new_sequence_id
 
     def start_activity(
