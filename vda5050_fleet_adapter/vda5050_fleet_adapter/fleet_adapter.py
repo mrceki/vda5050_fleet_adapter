@@ -304,11 +304,9 @@ class RobotAdapter:
                 self.last_nodes = [[node, self.get_node_pose(node)] for node in path]
                 new_edges = []
                 for i in range(len(path) - 1):
-                    for edge_name, edge in self.edges.items():
-                        if (edge['start'] == path[i] and edge['end'] == path[i + 1]) or \
-                                (edge['start'] == path[i + 1] and edge['end'] == path[i]):
-                            new_edges.append(edge_name)
-                            break
+                    edge = self.find_edge(path[i], path[i + 1])
+                    if edge:
+                        new_edges.append(edge)
                 self.last_edges = new_edges
         else:
             # Compute new path
@@ -320,11 +318,9 @@ class RobotAdapter:
                 self.last_nodes = [[node, self.get_node_pose(node)] for node in path]
                 self.last_edges = []
                 for i in range(len(path) - 1):
-                    for edge_name, edge in self.edges.items():
-                        if (edge['start'] == path[i] and edge['end'] == path[i + 1]) or \
-                                (edge['start'] == path[i + 1] and edge['end'] == path[i]):
-                            self.last_edges.append(edge_name)
-                            break
+                    edge = self.find_edge(path[i], path[i + 1])
+                    if edge:
+                        self.last_edges.append(edge)
                 self.current_edge = self.last_edges[0] if self.last_edges else None
             else:
                 self.last_nodes = [[self.current_node, self.get_node_pose(self.current_node)], [self.goal_node, self.get_node_pose(self.goal_node)]]
@@ -346,6 +342,12 @@ class RobotAdapter:
             self.task_id,
             self.last_nodes, self.last_edges
         )
+
+    def find_edge(self, start_node, end_node):
+        for edge_name, edge in self.edges.items():
+            if edge['start'] == start_node and edge['end'] == end_node:
+                return edge_name
+        return None
 
     def stop(self, activity):
         if self.execution is not None:
