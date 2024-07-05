@@ -233,6 +233,7 @@ class RobotAdapter:
 
     def execute_action(self, category: str, description: dict, execution):
         self.execution = execution
+        self.node.get_logger().warn(f'Executing action [{category}] with description [{description}]')
         return
     
     def attempt_cmd_until_success(self, cmd, args):
@@ -265,30 +266,38 @@ class RobotAdapter:
             "dock",
             destination.dock,
         ):
-            case(RobotAPIResult.SUCCESS, path):
+            case(RobotAPIResult.WAITING):
+                pass
+            case(RobotAPIResult.INITIALIZING):
+                pass
+            case(RobotAPIResult.RUNNING):
+                pass
+            
+            case(RobotAPIResult.FINISHED, path):
                 self.override= self.execution.override_schedule(
                     path["map_name"], path["path"]
                 )
                 return True
-            case RobotAPIResult.RETRY:
+            
+            case RobotAPIResult.FAILED:
                 return False
             
-            case RobotAPIResult.IMPOSSIBLE:
-                new_goal_node = get_nearest_node(self.nodes, [destination.position[0], destination.position[1]])
-                self.last_nodes, self.last_edges, self.current_node, self.goal_node, self.current_edge = compute_path_and_edges(
-                    self.task_id, self.last_task_id, self.last_nodes, self.graph, self.nodes, self.edges, new_goal_node, self.position
-                )
-                self.attempt_cmd_until_success(
-                    cmd=self.api.navigate,
-                    args=(
-                        self.name,
-                        destination.position,
-                        destination.map,
-                        destination.speed_limit,
-                        self.task_id,
-                        self.last_nodes, self.last_edges
-                    ),
-                )
+            # case RobotAPIResult.IMPOSSIBLE:
+            #     new_goal_node = get_nearest_node(self.nodes, [destination.position[0], destination.position[1]])
+            #     self.last_nodes, self.last_edges, self.current_node, self.goal_node, self.current_edge = compute_path_and_edges(
+            #         self.task_id, self.last_task_id, self.last_nodes, self.graph, self.nodes, self.edges, new_goal_node, self.position
+            #     )
+            #     self.attempt_cmd_until_success(
+            #         cmd=self.api.navigate,
+            #         args=(
+            #             self.name,
+            #             destination.position,
+            #             destination.map,
+            #             destination.speed_limit,
+            #             self.task_id,
+            #             self.last_nodes, self.last_edges
+            #         ),
+            #     )
                 
 
 def parallel(f):

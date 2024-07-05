@@ -8,14 +8,21 @@ import os
 import enum
 
 class RobotAPIResult(enum.IntEnum):
-    SUCCESS = 0
-    """The request was successful"""
+    WAITING = 0
+    """Waiting for the trigger (passing the mode, entering the edge)"""
 
-    RETRY = 1
-    """The client failed to connect but might succeed if you try again"""
+    INITIALIZING = 1
 
-    IMPOSSIBLE = 2
+    RUNNING = 2
     """The client connected but something about the request is impossible"""
+
+    PAUSED = 3
+    """Paused by instantAction or external trigger"""
+    
+    FINISHED = 4
+
+    FAILED = 5
+    """Action could not be performed."""
 
 class RobotAPI:
     def __init__(self, config_yaml):
@@ -33,7 +40,7 @@ class RobotAPI:
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
         print("Connecting to MQTT broker")
-        self.client.connect("127.0.0.1", 1883, 60)
+        self.client.connect("localhost", 1884, 60)
         self.client.loop_start()
         self.robot_position = []
         self.last_node_theta = None
@@ -309,6 +316,13 @@ class RobotAPI:
             self.sequence_map[task_id][entity_type][entity_id] = new_sequence_id
             return new_sequence_id
 
+    def get_action_states(self, robot_name, task_id):
+        if robot_name in self.state_data and self.state_data[robot_name].get("task_id") == task_id:
+            return self.state_data[robot_name].get("actionStates", [])
+        else:
+            print(f"Robot {robot_name} not found in state data for action states")
+            return 
+
     def start_activity(
         self,
         robot_name: str,
@@ -371,6 +385,8 @@ class RobotAPI:
                     #"stationType": "charging"
                 }
             }
+        else:
+            raise ValueError(f"Unsupported activity type: {activity}")
 
         instant_action = {
             "headerId": int(time.time()),
@@ -382,6 +398,13 @@ class RobotAPI:
         }
 
         self.client.publish(f"{self.prefix}/{robot_name}/order", json.dumps(instant_action))
+        action_state = self.get_action_states(robot_name, task_id)
+        if action_state in [1, 2, 3, 0]:
+            pass
+        elif action_state == 4:
+            return True
+        elif action_state == 5:
+            return False
         return True
 
     def stop(self, robot_name: str):
