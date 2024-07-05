@@ -98,3 +98,52 @@ def get_nearest_node(nodes, position):
 def get_node_pose(nodes, node):
     """Returns the (x, y) position of the node."""
     return (nodes[node]['x'], nodes[node]['y'])
+
+def find_edge(edges, start_node, end_node):
+    for edge_name, edge in edges.items():
+        if edge['start'] == start_node and edge['end'] == end_node:
+            return edge_name
+    return None
+
+def compute_path_and_edges(task_id, last_task_id, last_nodes, graph, nodes, edges, new_goal_node, position):
+    """
+    Compute the path and edges for the robot based on the current and goal nodes.
+
+    Args:
+        task_id (str): Current task ID.
+        last_task_id (str): Last task ID.
+        last_nodes (list): List of last nodes.
+        graph (networkx.Graph): Navigation graph.
+        nodes (dict): Dictionary of nodes with their attributes.
+        new_goal_node (str): New goal node.
+        position (tuple): Current position of the robot.
+
+    Returns:
+        tuple: Updated last nodes, last edges, current node, goal node, and current edge.
+    """
+    if task_id == last_task_id and last_nodes:
+        base_node = last_nodes[-1][0]  # Extract the node name
+        print(f'Base node: {base_node}')
+        print(f'New goal node: {new_goal_node}')
+        path = find_path(graph, base_node, new_goal_node)
+
+        if path:
+            last_nodes = [[node, get_node_pose(nodes, node)] for node in path]
+            last_edges = [find_edge(edges, path[i], path[i + 1]) for i in range(len(path) - 1) if find_edge(edges, path[i], path[i + 1])]
+            return last_nodes, last_edges, None, None, None
+    else:
+        current_node = get_nearest_node(nodes, position)
+        goal_node = new_goal_node
+        path = find_path(graph, current_node, goal_node)
+
+        if path:
+            last_nodes = [[node, get_node_pose(nodes, node)] for node in path]
+            last_edges = [find_edge(edges, path[i], path[i + 1]) for i in range(len(path) - 1) if find_edge(edges, path[i], path[i + 1])]
+            current_edge = last_edges[0] if last_edges else None
+            return last_nodes, last_edges, current_node, goal_node, current_edge
+        else:
+            last_nodes = [[current_node, get_node_pose(nodes, current_node)], [goal_node, get_node_pose(nodes, goal_node)]]
+            last_edges = []
+            return last_nodes, last_edges, current_node, goal_node, None
+
+    return last_nodes, last_edges, None, None, None

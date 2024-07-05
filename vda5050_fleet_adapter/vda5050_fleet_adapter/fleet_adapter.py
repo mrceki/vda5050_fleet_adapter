@@ -4,7 +4,6 @@ import yaml
 import time
 import threading
 import asyncio
-import nudged
 import math
 import networkx as nx
 
@@ -21,7 +20,7 @@ import rmf_adapter.easy_full_control as rmf_easy
 from .RobotClientAPI import RobotAPI
 from rmf_task_msgs.msg import BidResponse
 from rmf_fleet_msgs.msg import FleetState
-from .adapter_utils import parse_nav_graph, compute_transforms, create_graph_from_nav, find_path, apply_transformations, transform_node, get_nearest_node, get_node_pose
+from .adapter_utils import parse_nav_graph, compute_transforms, create_graph_from_nav, find_path, apply_transformations, transform_node, get_nearest_node, get_node_pose, compute_path_and_edges
 
 def main(argv=sys.argv):
     rclpy.init(args=argv)
@@ -168,6 +167,8 @@ class RobotAdapter:
         self.last_task_id = None
         self.last_nodes = []
         self.last_edges = []
+        self.issue_cmd_thread = None
+        self.cancel_cmd_event = threading.Event()
 
     def update(self, state):
         self.position = state.position  
@@ -195,73 +196,34 @@ class RobotAdapter:
     def navigate(self, destination, execution):
         self.execution = execution
         new_goal_node = get_nearest_node(self.nodes, [destination.position[0], destination.position[1]])
-
-        if self.task_id == self.last_task_id and self.last_nodes:
-            # Use the last goal node as the base node
-            base_node = self.last_nodes[-1][0]  # Extract the node name
-            print(f'Base node: {base_node}')
-            print(f'New goal node: {new_goal_node}')
-            path = find_path(self.graph, base_node, new_goal_node)
-
-            if path:
-                self.last_nodes = [[node, get_node_pose(self.nodes, node)] for node in path]
-                new_edges = [self.find_edge(path[i], path[i + 1]) for i in range(len(path) - 1) if self.find_edge(path[i], path[i + 1])]
-                self.last_edges = new_edges
-        else:
-            self.current_node = get_nearest_node(self.nodes, self.position)
-            self.goal_node = new_goal_node
-            path = find_path(self.graph, self.current_node, self.goal_node)
-
-            if path:
-                self.last_nodes = [[node, get_node_pose(self.nodes, node)] for node in path]
-                self.last_edges = [self.find_edge(path[i], path[i + 1]) for i in range(len(path) - 1) if self.find_edge(path[i], path[i + 1])]
-                self.current_edge = self.last_edges[0] if self.last_edges else None
-            else:
-                self.last_nodes = [[self.current_node, get_node_pose(self.nodes, self.current_node)], [self.goal_node, get_node_pose(self.nodes, self.goal_node)]]
-                self.last_edges = []
-
-            self.last_task_id = self.task_id
+        self.node.get_logger().warn(f"Is that docking station? {destination.dock}")
         
+        if destination.dock is not None:
+            self.attempt_cmd_until_success(self.perform_docking, (destination,))
+            return
+
+        self.last_nodes, self.last_edges, self.current_node, self.goal_node, self.current_edge = compute_path_and_edges(
+            self.task_id, self.last_task_id, self.last_nodes, self.graph, self.nodes, self.edges, new_goal_node, self.position
+        )
+
         self.node.get_logger().info(
             f'Commanding [{self.name}] to navigate to {destination.position} '
             f'on map [{destination.map}] with task_id [{self.task_id}]'
             f' from current node [{self.current_node}] to goal node [{self.goal_node}] '
             f'via edges [{self.last_edges}]'
         )
-        self.api.navigate(
-            self.name,
-            destination.position,
-            destination.map,
-            destination.speed_limit,
-            self.task_id,
-            self.last_nodes, self.last_edges
+
+        self.attempt_cmd_until_success(
+            cmd=self.api.navigate,
+            args=(
+                self.name,
+                destination.position,
+                destination.map,
+                destination.speed_limit,
+                self.task_id,
+                self.last_nodes, self.last_edges
+            ),
         )
-
-    # def attempt_cmd_until_success(self, cmd, args):
-    #     self.cancel_cmd_attempt()
-
-    #     def loop():
-    #         while not cmd(*args):
-    #             self.node.get_logger().warn(f'Failed to contact fleet manager for robot {self.name}')
-    #             if self.cancel_cmd_event.wait(1.0):
-    #                 break
-
-    #     self.issue_cmd_thread = threading.Thread(target=loop)
-    #     self.issue_cmd_thread.start()
-
-    # def cancel_cmd_attempt(self):
-    #     if self.issue_cmd_thread is not None:
-    #         self.cancel_cmd_event.set()
-    #         if self.issue_cmd_thread.is_alive():
-    #             self.issue_cmd_thread.join()
-    #             self.issue_cmd_thread = None
-    #     self.cancel_cmd_event.clear()
-
-    def find_edge(self, start_node, end_node):
-        for edge_name, edge in self.edges.items():
-            if edge['start'] == start_node and edge['end'] == end_node:
-                return edge_name
-        return None
 
     def stop(self, activity):
         if self.execution is not None:
@@ -272,6 +234,28 @@ class RobotAdapter:
     def execute_action(self, category: str, description: dict, execution):
         self.execution = execution
         return
+    
+    def attempt_cmd_until_success(self, cmd, args):
+        self.cancel_cmd_attempt()
+
+        def loop():
+            while not cmd(*args):
+                self.node.get_logger().warn(
+                    f'Failed to contact fleet manager for robot {self.name}'
+                )
+                if self.cancel_cmd_event.wait(1.0):
+                    break
+
+        self.issue_cmd_thread = threading.Thread(target=loop, args=())
+        self.issue_cmd_thread.start()
+
+    def cancel_cmd_attempt(self):
+        if self.issue_cmd_thread is not None:
+            self.cancel_cmd_event.set()
+            if self.issue_cmd_thread.is_alive():
+                self.issue_cmd_thread.join()
+                self.issue_cmd_thread = None
+        self.cancel_cmd_event.clear()
 
 def parallel(f):
     def run_in_parallel(*args, **kwargs):
