@@ -5,6 +5,17 @@ import uuid
 from datetime import datetime
 import yaml
 import os
+import enum
+
+class RobotAPIResult(enum.IntEnum):
+    SUCCESS = 0
+    """The request was successful"""
+
+    RETRY = 1
+    """The client failed to connect but might succeed if you try again"""
+
+    IMPOSSIBLE = 2
+    """The client connected but something about the request is impossible"""
 
 class RobotAPI:
     def __init__(self, config_yaml):
@@ -253,7 +264,7 @@ class RobotAPI:
             "headerId": int(time.time()),
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
             "version": "2.0.0",
-            "manufacturer": "ALTINAY",
+            "manufacturer": "OSRF",
             "serialNumber": robot_name,
             "orderId": orderId,
             "orderUpdateId": orderUpdateId,
@@ -301,54 +312,83 @@ class RobotAPI:
     def start_activity(
         self,
         robot_name: str,
+        task_id,
         activity: str,
         label: str
     ):
-        order = {
+        if task_id not in self.task_orders:
+            orderId = str(uuid.uuid4())
+            orderUpdateId = 0
+            self.task_orders[task_id] = {"orderId": orderId, "orderUpdateId": orderUpdateId}
+            self.sequence_map[task_id] = {"nodes": {}, "edges": {}}  # Initialize hashmap for the task
+        else:
+            self.task_orders[task_id]["orderUpdateId"] += 1
+            orderId = self.task_orders[task_id]["orderId"]
+            orderUpdateId = self.task_orders[task_id]["orderUpdateId"]
+
+        print(f"Starting activity {activity} on robot {robot_name}")
+
+        if activity == "pick":
+            action = {
+                "actionId": str(uuid.uuid4()),
+                "actionType": "pick",
+                "blockingType": "HARD",
+                "parameters": {
+                    "lhd": "lhd",
+                    "stationType": "stationType",
+                    "stationName": label,
+                    "loadType": "loadType",
+                    "loadId": "loadId",
+                    "height": "height",
+                    "depth": "depth",
+                    "side": "side"
+                }
+            }
+        elif activity == "drop":
+            action = {
+                "actionId": str(uuid.uuid4()),
+                "actionType": "drop",
+                "blockingType": "HARD",
+                "parameters": {
+                    "lhd": "lhd",
+                    "stationType": "stationType",
+                    "stationName": label,
+                    "loadType": "loadType",
+                    "loadId": "loadId",
+                    "height": "height",
+                    "depth": "depth",
+                    "side": "side"
+                }
+            }
+            
+        elif activity == "dock":
+            action = {
+                "actionId": str(uuid.uuid4()),
+                "actionType": "finePositioning",
+                "blockingType": "HARD",
+                "parameters": {
+                    "stationName": label,
+                    #"stationType": "charging"
+                }
+            }
+
+        instant_action = {
             "headerId": int(time.time()),
             "timestamp": datetime.utcnow().isoformat() + 'Z',
-            "version": "1.3.2",
-            "manufacturer": "YourManufacturer",
+            "version": "2.0.0",
+            "manufacturer": "OSRF",
             "serialNumber": robot_name,
-            "orderId": str(uuid.uuid4()),
-            "orderUpdateId": 0,
-            "nodes": [
-                {
-                    "nodeId": "current_position",
-                    "sequenceId": 0,
-                    "released": True,
-                    "actions": [
-                        {
-                            "actionId": str(uuid.uuid4()),
-                            "actionType": activity,
-                            "blockingType": "HARD",
-                            "actionDescription": label,
-                            "actionParameters": []
-                        }
-                    ]
-                }
-            ],
-            "edges": []
+            "actions": [action]
         }
 
-        self.client.publish(f"{self.prefix}/{robot_name}/order", json.dumps(order))
+        self.client.publish(f"{self.prefix}/{robot_name}/order", json.dumps(instant_action))
         return True
 
     def stop(self, robot_name: str):
         stop_action = {
-            "actionId": str(uuid.uuid4()),  # Unique action ID
+            "actionId": str(uuid.uuid4()),  
             "actionType": "cancelOrder",
-            "blockingType": "HARD",
-            "actionParameters": [
-                # {
-                #     "key": "orderId",
-                #     "value": self.last_order[robot_name]["orderId"]
-                # },
-                # {
-                #     "key": "orderUpdateId",
-                #     "value": self.last_order[robot_name]["orderUpdateId"]
-                # }
-            ]
+            "blockingType": "HARD"
         }
 
         instant_action = {

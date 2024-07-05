@@ -17,7 +17,7 @@ import rmf_adapter
 from rmf_adapter import Adapter
 import rmf_adapter.easy_full_control as rmf_easy
 
-from .RobotClientAPI import RobotAPI
+from .RobotClientAPI import RobotAPI, RobotAPIResult
 from rmf_task_msgs.msg import BidResponse
 from rmf_fleet_msgs.msg import FleetState
 from .adapter_utils import parse_nav_graph, compute_transforms, create_graph_from_nav, find_path, apply_transformations, transform_node, get_nearest_node, get_node_pose, compute_path_and_edges
@@ -256,6 +256,40 @@ class RobotAdapter:
                 self.issue_cmd_thread.join()
                 self.issue_cmd_thread = None
         self.cancel_cmd_event.clear()
+
+    def perform_docking(self, destination):
+        self.node.get_logger().info(f'Performing docking for robot [{self.name}]')
+        match self.api.start_activity(
+            self.name,
+            self.task_id,
+            "dock",
+            destination.dock,
+        ):
+            case(RobotAPIResult.SUCCESS, path):
+                self.override= self.execution.override_schedule(
+                    path["map_name"], path["path"]
+                )
+                return True
+            case RobotAPIResult.RETRY:
+                return False
+            
+            case RobotAPIResult.IMPOSSIBLE:
+                new_goal_node = get_nearest_node(self.nodes, [destination.position[0], destination.position[1]])
+                self.last_nodes, self.last_edges, self.current_node, self.goal_node, self.current_edge = compute_path_and_edges(
+                    self.task_id, self.last_task_id, self.last_nodes, self.graph, self.nodes, self.edges, new_goal_node, self.position
+                )
+                self.attempt_cmd_until_success(
+                    cmd=self.api.navigate,
+                    args=(
+                        self.name,
+                        destination.position,
+                        destination.map,
+                        destination.speed_limit,
+                        self.task_id,
+                        self.last_nodes, self.last_edges
+                    ),
+                )
+                
 
 def parallel(f):
     def run_in_parallel(*args, **kwargs):
