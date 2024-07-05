@@ -13,104 +13,15 @@ import rclpy.node
 from rclpy.parameter import Parameter
 from rclpy.duration import Duration
 from rclpy.executors import SingleThreadedExecutor
-from rclpy.qos import QoSProfile
 
 import rmf_adapter
 from rmf_adapter import Adapter
 import rmf_adapter.easy_full_control as rmf_easy
-from rmf_adapter import Transformation
 
 from .RobotClientAPI import RobotAPI
 from rmf_task_msgs.msg import BidResponse
 from rmf_fleet_msgs.msg import FleetState
-
-def compute_transforms(level, coords, node=None):
-    """Get transforms between RMF and robot coordinates."""
-    rmf_coords = coords['rmf']
-    robot_coords = coords['robot']
-    tf = nudged.estimate(rmf_coords, robot_coords)
-    if node:
-        mse = nudged.estimate_error(tf, rmf_coords, robot_coords)
-        node.get_logger().info(
-            f"Transformation error estimate for {level}: {mse}"
-        )
-        
-    print(f"Rotation: {tf.get_rotation()}")
-    print(f"Scale: {tf.get_scale()}")
-    print(f"Translation: {tf.get_translation()}")
-    return Transformation(
-        tf.get_rotation(),
-        tf.get_scale(),
-        tf.get_translation()
-    )
-
-def parse_nav_graph(nav_graph_path):
-    with open(nav_graph_path, "r") as f:
-        nav_graph = yaml.safe_load(f)
-    
-    nodes = {}
-    for i, vertex in enumerate(nav_graph['levels']['L1']['vertices']):
-        name = vertex[2].get('name', f'node{i}')
-        nodes[name] = {'x': vertex[0], 'y': vertex[1], 'attributes': vertex[2]}
-
-    edges = {}
-    for i, lane in enumerate(nav_graph['levels']['L1']['lanes']):
-        start_node = list(nodes.keys())[lane[0]]
-        end_node = list(nodes.keys())[lane[1]]
-        # Create an edge for the direction from start_node to end_node
-        edge_name = f'edge{i}_a'
-        edges[edge_name] = {'start': start_node, 'end': end_node, 'attributes': lane[2]}
-        # Create an edge for the direction from end_node to start_node
-        edge_name = f'edge{i}_b'
-        edges[edge_name] = {'start': end_node, 'end': start_node, 'attributes': lane[2]}
-    
-    return nodes, edges
-
-
-def distance(p1, p2):
-    return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
-
-def create_graph_from_nav(nodes, edges):
-    graph = nx.Graph()
-    for edge_name, edge in edges.items():
-        start_node = edge['start']
-        end_node = edge['end']
-        weight = distance((nodes[start_node]['x'], nodes[start_node]['y']), 
-                          (nodes[end_node]['x'], nodes[end_node]['y']))
-        graph.add_edge(start_node, end_node, weight=weight)
-    return graph
-
-def transform_node(x, y, rotation, scale, translation):
-    # Apply rotation
-    cos_theta = math.cos(rotation)
-    sin_theta = math.sin(rotation)
-    x_rotated = x * cos_theta - y * sin_theta
-    y_rotated = x * sin_theta + y * cos_theta
-
-    # Apply scaling
-    x_scaled = x_rotated * scale
-    y_scaled = y_rotated * scale
-
-    # Apply translation
-    x_transformed = x_scaled + translation[0]
-    y_transformed = y_scaled + translation[1]
-
-    return x_transformed, y_transformed
-
-def apply_transformations(nodes, rotation, scale, translation):
-    for name, node in nodes.items():
-        x_transformed, y_transformed = transform_node(
-            node['x'], node['y'], rotation, scale, translation)
-        node['x'] = x_transformed
-        node['y'] = y_transformed
-        print(f"Transformed node {name}: x={x_transformed}, y={y_transformed}")
-
-def find_path(graph, start, goal):
-    try:
-        path = nx.shortest_path(graph, source=start, target=goal, weight='weight')
-        return path
-    except nx.NetworkXNoPath:
-        return None
+from .adapter_utils import parse_nav_graph, compute_transforms, create_graph_from_nav, find_path, apply_transformations, transform_node, get_nearest_node, get_node_pose
 
 def main(argv=sys.argv):
     rclpy.init(args=argv)
@@ -162,11 +73,7 @@ def main(argv=sys.argv):
     adapter.start()
     time.sleep(1.0)
 
-    if args.server_uri == '':
-        server_uri = None
-    else:
-        server_uri = args.server_uri
-
+    server_uri = args.server_uri or None
     fleet_config.server_uri = server_uri
 
     for level, coords in config_yaml['reference_coordinates'].items():
@@ -181,12 +88,8 @@ def main(argv=sys.argv):
     fleet_mgr_yaml = config_yaml['fleet_manager']
     api = RobotAPI(fleet_mgr_yaml)
 
-    robots = {}
-    for robot_name in fleet_config.known_robots:
-        robot_config = fleet_config.get_known_robot_configuration(robot_name)
-        robots[robot_name] = RobotAdapter(
-            robot_name, robot_config, node, api, fleet_handle, nodes, edges, graph
-        )
+    robots = {robot_name: RobotAdapter(robot_name, fleet_config.get_known_robot_configuration(robot_name), node, api, fleet_handle, nodes, edges, graph)
+              for robot_name in fleet_config.known_robots}
 
     update_period = 1.0/config_yaml['rmf_fleet'].get(
         'robot_state_update_frequency', 10.0
@@ -291,7 +194,7 @@ class RobotAdapter:
 
     def navigate(self, destination, execution):
         self.execution = execution
-        new_goal_node = self.get_nearest_node([destination.position[0], destination.position[1]])
+        new_goal_node = get_nearest_node(self.nodes, [destination.position[0], destination.position[1]])
 
         if self.task_id == self.last_task_id and self.last_nodes:
             # Use the last goal node as the base node
@@ -301,29 +204,20 @@ class RobotAdapter:
             path = find_path(self.graph, base_node, new_goal_node)
 
             if path:
-                self.last_nodes = [[node, self.get_node_pose(node)] for node in path]
-                new_edges = []
-                for i in range(len(path) - 1):
-                    edge = self.find_edge(path[i], path[i + 1])
-                    if edge:
-                        new_edges.append(edge)
+                self.last_nodes = [[node, get_node_pose(self.nodes, node)] for node in path]
+                new_edges = [self.find_edge(path[i], path[i + 1]) for i in range(len(path) - 1) if self.find_edge(path[i], path[i + 1])]
                 self.last_edges = new_edges
         else:
-            # Compute new path
-            self.current_node = self.get_nearest_node(self.position)
+            self.current_node = get_nearest_node(self.nodes, self.position)
             self.goal_node = new_goal_node
             path = find_path(self.graph, self.current_node, self.goal_node)
 
             if path:
-                self.last_nodes = [[node, self.get_node_pose(node)] for node in path]
-                self.last_edges = []
-                for i in range(len(path) - 1):
-                    edge = self.find_edge(path[i], path[i + 1])
-                    if edge:
-                        self.last_edges.append(edge)
+                self.last_nodes = [[node, get_node_pose(self.nodes, node)] for node in path]
+                self.last_edges = [self.find_edge(path[i], path[i + 1]) for i in range(len(path) - 1) if self.find_edge(path[i], path[i + 1])]
                 self.current_edge = self.last_edges[0] if self.last_edges else None
             else:
-                self.last_nodes = [[self.current_node, self.get_node_pose(self.current_node)], [self.goal_node, self.get_node_pose(self.goal_node)]]
+                self.last_nodes = [[self.current_node, get_node_pose(self.nodes, self.current_node)], [self.goal_node, get_node_pose(self.nodes, self.goal_node)]]
                 self.last_edges = []
 
             self.last_task_id = self.task_id
@@ -343,6 +237,26 @@ class RobotAdapter:
             self.last_nodes, self.last_edges
         )
 
+    # def attempt_cmd_until_success(self, cmd, args):
+    #     self.cancel_cmd_attempt()
+
+    #     def loop():
+    #         while not cmd(*args):
+    #             self.node.get_logger().warn(f'Failed to contact fleet manager for robot {self.name}')
+    #             if self.cancel_cmd_event.wait(1.0):
+    #                 break
+
+    #     self.issue_cmd_thread = threading.Thread(target=loop)
+    #     self.issue_cmd_thread.start()
+
+    # def cancel_cmd_attempt(self):
+    #     if self.issue_cmd_thread is not None:
+    #         self.cancel_cmd_event.set()
+    #         if self.issue_cmd_thread.is_alive():
+    #             self.issue_cmd_thread.join()
+    #             self.issue_cmd_thread = None
+    #     self.cancel_cmd_event.clear()
+
     def find_edge(self, start_node, end_node):
         for edge_name, edge in self.edges.items():
             if edge['start'] == start_node and edge['end'] == end_node:
@@ -358,23 +272,6 @@ class RobotAdapter:
     def execute_action(self, category: str, description: dict, execution):
         self.execution = execution
         return
-
-    def get_nearest_node(self, position):
-        nearest_node = None
-        min_distance = float('inf')
-        for name, node in self.nodes.items():
-            node_position = (node['x'], node['y'])
-            dist = distance(position, node_position)
-            if dist < min_distance:
-                min_distance = dist
-                nearest_node = name
-        return nearest_node
-
-    def get_node_pose(self, node):
-        """
-        Returns the (x, y) position of the node.
-        """
-        return (self.nodes[node]['x'], self.nodes[node]['y'])
 
 def parallel(f):
     def run_in_parallel(*args, **kwargs):
