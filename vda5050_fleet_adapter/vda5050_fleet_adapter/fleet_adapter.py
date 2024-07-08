@@ -12,14 +12,19 @@ import rclpy.node
 from rclpy.parameter import Parameter
 from rclpy.duration import Duration
 from rclpy.executors import SingleThreadedExecutor
+from rclpy.qos import qos_profile_system_default
+from rclpy.qos import QoSDurabilityPolicy as Durability
+from rclpy.qos import QoSHistoryPolicy as History
+from rclpy.qos import QoSProfile
+from rclpy.qos import QoSReliabilityPolicy as Reliability
 
 import rmf_adapter
 from rmf_adapter import Adapter
 import rmf_adapter.easy_full_control as rmf_easy
 
-from .RobotClientAPI import RobotAPI, RobotAPIResult
+from .RobotClientAPI import RobotAPI, RobotAPIResult, RobotUpdateData
 from rmf_task_msgs.msg import BidResponse
-from rmf_fleet_msgs.msg import FleetState
+from rmf_fleet_msgs.msg import LaneRequest, ClosedLanes
 from .adapter_utils import parse_nav_graph, compute_transforms, create_graph_from_nav, find_path, apply_transformations, transform_node, get_nearest_node, get_node_pose, compute_path_and_edges
 
 def main(argv=sys.argv):
@@ -114,18 +119,8 @@ def main(argv=sys.argv):
     update_thread = threading.Thread(target=update_loop, args=())
     update_thread.start()
 
-    def bid_response_callback(msg):
-        robot_name = msg.proposal.expected_robot_name
-        if robot_name in robots:
-            robots[robot_name].task_id = msg.task_id
-        print(f"Received bid response for robot [{robot_name}] with task_id [{msg.task_id}]")
-
-    bid_response_sub = node.create_subscription(
-        BidResponse,
-        '/rmf_task/bid_response',
-        bid_response_callback,
-        10
-    )
+    connections = ros_connections(node, robots, fleet_handle)
+    connections
 
     rclpy_executor = SingleThreadedExecutor()
     rclpy_executor.add_node(node)
@@ -169,8 +164,9 @@ class RobotAdapter:
         self.last_edges = []
         self.issue_cmd_thread = None
         self.cancel_cmd_event = threading.Event()
+        self.teleoperation = None
 
-    def update(self, state):
+    def update(self, state, data: RobotUpdateData):
         self.position = state.position  
         activity_identifier = None
         if self.execution:
@@ -179,7 +175,8 @@ class RobotAdapter:
                 self.execution = None
             else:
                 activity_identifier = self.execution.identifier
-
+        # if self.teleoperation is not None:
+        #     self.teleoperation.update(data)
         self.update_handle.update(state, activity_identifier)
 
     def make_callbacks(self):
@@ -234,6 +231,22 @@ class RobotAdapter:
     def execute_action(self, category: str, description: dict, execution):
         self.execution = execution
         self.node.get_logger().warn(f'Executing action [{category}] with description [{description}]')
+        match category:
+            # case "teleop":
+            #     self.teleoperation = Teleoperation(execution)
+            #     # self.attempt_cmd_until_success(
+            #     #         cmd=self.api.toggle_teleop, args=(self.name, True)
+            #     #     )
+            case "delivery_pickup":
+                self.attempt_cmd_until_success(
+                    cmd=self.api.start_activity, args=(
+                        self.name, self.task_id, "pickup", description)
+                )
+            case "delivery_dropoff":
+                self.attempt_cmd_until_success(
+                    cmd=self.api.start_activity, args=(
+                        self.name, self.task_id, "dropoff", description)
+                )
         return
     
     def attempt_cmd_until_success(self, cmd, args):
@@ -298,7 +311,34 @@ class RobotAdapter:
             #             self.last_nodes, self.last_edges
             #         ),
             #     )
-                
+
+# class Teleoperation:
+
+#     def __init__(self, execution):
+#         self.execution = execution
+#         self.override = None
+#         self.last_position = None
+
+#     def update(self, data: RobotUpdateData):
+#         if self.last_position is None:
+#             print(
+#                 'about to override schedule with '
+#                 f'{data.map}: {[data.position]}'
+#             )
+#             self.override = self.execution.override_schedule(
+#                 data.map, [data.position], 30.0
+#             )
+#             self.last_position = data.position
+#         else:
+#             dx = self.last_position[0] - data.position[0]
+#             dy = self.last_position[1] - data.position[1]
+#             dist = math.sqrt(dx * dx + dy * dy)
+#             if dist > 0.1:
+#                 print('about to replace override schedule')
+#                 self.override = self.execution.override_schedule(
+#                     data.map, [data.position], 30.0
+#                 )
+#                 self.last_position = data.position
 
 def parallel(f):
     def run_in_parallel(*args, **kwargs):
@@ -329,7 +369,95 @@ def update_robot(robot: RobotAdapter):
         robot.api.send_factsheet_request(robot.name)
         return
 
-    robot.update(state)
+    robot.update(state, data)
+    
+def ros_connections(node, robots, fleet_handle):
+    fleet_name = fleet_handle.more().fleet_name
+
+    transient_qos = QoSProfile(
+        history=History.KEEP_LAST,
+        depth=1,
+        reliability=Reliability.RELIABLE,
+        durability=Durability.TRANSIENT_LOCAL,
+    )
+
+    closed_lanes_pub = node.create_publisher(
+        ClosedLanes, 'closed_lanes', qos_profile=transient_qos
+    )
+
+    closed_lanes = set()
+
+    def lane_request_cb(msg):
+        if msg.fleet_name and msg.fleet_name != fleet_name:
+            print(f'Ignoring lane request for fleet [{msg.fleet_name}]')
+            return
+
+        if msg.open_lanes:
+            print(f'Opening lanes: {msg.open_lanes}')
+
+        if msg.close_lanes:
+            print(f'Closing lanes: {msg.close_lanes}')
+
+        fleet_handle.more().open_lanes(msg.open_lanes)
+        fleet_handle.more().close_lanes(msg.close_lanes)
+
+        for lane_idx in msg.close_lanes:
+            closed_lanes.add(lane_idx)
+
+        for lane_idx in msg.open_lanes:
+            closed_lanes.remove(lane_idx)
+
+        state_msg = ClosedLanes()
+        state_msg.fleet_name = fleet_name
+        state_msg.closed_lanes = list(closed_lanes)
+        closed_lanes_pub.publish(state_msg)
+
+    # def mode_request_cb(msg):
+    #     if (
+    #         msg.fleet_name is None
+    #         or msg.fleet_name != fleet_name
+    #         or msg.robot_name is None
+    #     ):
+    #         return
+
+    #     if msg.mode.mode == RobotMode.MODE_IDLE:
+    #         robot = robots.get(msg.robot_name)
+    #         if robot is None:
+    #             return
+    #         robot.finish_action()
+
+    lane_request_sub = node.create_subscription(
+        LaneRequest,
+        'lane_closure_requests',
+        lane_request_cb,
+        qos_profile=qos_profile_system_default,
+    )
+
+    def bid_response_callback(msg):
+            robot_name = msg.proposal.expected_robot_name
+            if robot_name in robots:
+                robots[robot_name].task_id = msg.task_id
+            print(f"Received bid response for robot [{robot_name}] with task_id [{msg.task_id}]")
+    
+    bid_response_sub = node.create_subscription(
+        BidResponse,
+        '/rmf_task/bid_response',
+        bid_response_callback,
+        qos_profile=qos_profile_system_default,
+    )
+
+    # action_execution_notice_sub = node.create_subscription(
+    #     ModeRequest,
+    #     'action_execution_notice',
+    #     mode_request_cb,
+    #     qos_profile=qos_profile_system_default,
+    # )
+
+    return [
+        lane_request_sub,
+        # action_execution_notice_sub,
+    ]
+
 
 if __name__ == '__main__':
     main(sys.argv)

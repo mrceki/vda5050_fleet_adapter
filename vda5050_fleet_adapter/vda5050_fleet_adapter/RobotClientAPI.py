@@ -342,7 +342,7 @@ class RobotAPI:
 
         print(f"Starting activity {activity} on robot {robot_name}")
 
-        if activity == "pick":
+        if activity == "delivery_pickup":
             action = {
                 "actionId": str(uuid.uuid4()),
                 "actionType": "pick",
@@ -358,7 +358,7 @@ class RobotAPI:
                     "side": "side"
                 }
             }
-        elif activity == "drop":
+        elif activity == "delivery_dropoff":
             action = {
                 "actionId": str(uuid.uuid4()),
                 "actionType": "drop",
