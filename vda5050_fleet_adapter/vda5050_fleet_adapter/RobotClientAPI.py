@@ -42,7 +42,7 @@ class RobotAPI:
         print("Connecting to MQTT broker")
         self.client.connect("localhost", 1884, 60)
         self.client.loop_start()
-        self.robot_position = []
+        self.robot_positions = {}
         self.last_node_theta = {}
         self.factsheets_folder = "factsheets"
     
@@ -83,7 +83,7 @@ class RobotAPI:
             robot_name = message.get("serialNumber")
             if robot_name:
                 self.state_data[robot_name] = message
-                self.robot_position = [message.get("agvPosition").get("x"), message.get("agvPosition").get("y"), message.get("agvPosition").get("theta")]
+                self.robot_positions[robot_name] = [message.get("agvPosition").get("x"), message.get("agvPosition").get("y"), message.get("agvPosition").get("theta")]
         except json.JSONDecodeError:
             print("Error decoding JSON message")
 
@@ -93,7 +93,7 @@ class RobotAPI:
             robot_name = message.get("serialNumber")
             self.visualization_data[robot_name] = message
             if robot_name:
-                self.robot_position = [message.get("agvPosition").get("x"), message.get("agvPosition").get("y"), message.get("agvPosition").get("theta")]
+                self.robot_positions[robot_name] = [message.get("agvPosition").get("x"), message.get("agvPosition").get("y"), message.get("agvPosition").get("theta")]
 
         except json.JSONDecodeError:
             print("Error decoding JSON message")
@@ -429,7 +429,7 @@ class RobotAPI:
 
     def position(self, robot_name: str):
         if robot_name in self.state_data or self.visualization_data:
-            return self.robot_position
+            return self.robot_positions[robot_name]
         else:
             print(f"Robot {robot_name} not found in state data for position")
             return None
@@ -468,10 +468,10 @@ class RobotAPI:
 
     def get_data(self, robot_name: str):
         map = self.map(robot_name)
-        position = self.position(robot_name)
+        position = self.robot_positions.get(robot_name)
         battery_soc = self.battery_soc(robot_name)
         if not (map is None or position is None or battery_soc is None):
-            return RobotUpdateData(robot_name, map, position, battery_soc, self.state_data)
+            return RobotUpdateData(robot_name, map, position, battery_soc, self.robot_positions)
         return None
 
 
@@ -481,10 +481,10 @@ class RobotUpdateData:
                  map: str,
                  position: list[float],
                  battery_soc: float,
-                 state_data: dict,
+                 robot_positions: dict,
                  requires_replan: bool | None = None):
         self.robot_name = robot_name
-        self.position = [state_data[robot_name].get("agvPosition").get("x"), state_data[robot_name].get("agvPosition").get("y"), state_data[robot_name].get("agvPosition").get("theta")]
+        self.position = robot_positions.get(robot_name)
         self.map = "L1"
         self.battery_soc = battery_soc
         self.requires_replan = requires_replan
