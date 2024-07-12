@@ -471,7 +471,7 @@ class RobotAPI:
         position = self.position(robot_name)
         battery_soc = self.battery_soc(robot_name)
         if not (map is None or position is None or battery_soc is None):
-            return RobotUpdateData(robot_name, map, position, battery_soc)
+            return RobotUpdateData(robot_name, map, position, battery_soc, self.state_data)
         return None
 
 
@@ -481,9 +481,10 @@ class RobotUpdateData:
                  map: str,
                  position: list[float],
                  battery_soc: float,
+                 state_data: dict,
                  requires_replan: bool | None = None):
         self.robot_name = robot_name
-        self.position = position
+        self.position = [state_data[robot_name].get("agvPosition").get("x"), state_data[robot_name].get("agvPosition").get("y"), state_data[robot_name].get("agvPosition").get("theta")]
         self.map = "L1"
         self.battery_soc = battery_soc
         self.requires_replan = requires_replan
