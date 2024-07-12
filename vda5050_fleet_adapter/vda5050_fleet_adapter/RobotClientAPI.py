@@ -32,7 +32,7 @@ class RobotAPI:
         self.debug = False
         self.state_data = {}
         self.visualization_data = {}
-        self.last_destination_node = None
+        self.last_destination_node = {}
         self.last_order = {}
         self.task_orders = {}
         self.sequence_map = {}
@@ -43,7 +43,7 @@ class RobotAPI:
         self.client.connect("localhost", 1884, 60)
         self.client.loop_start()
         self.robot_position = []
-        self.last_node_theta = None
+        self.last_node_theta = {}
         self.factsheets_folder = "factsheets"
     
     def on_connect(self, client, userdata, flags, rc):
@@ -231,8 +231,8 @@ class RobotAPI:
 
         order_nodes = []
         for i, node in enumerate(nodes):
-            if i == 0 and node[0] == self.last_destination_node:
-                node_theta = self.last_node_theta if self.last_node_theta is not None else pose[2]
+            if i == 0 and node[0] == self.last_destination_node.get(robot_name):
+                node_theta = self.last_node_theta.get(robot_name) if self.last_node_theta.get(robot_name) is not None else pose[2]
             else:
                 node_theta = pose[2]
 
@@ -282,8 +282,8 @@ class RobotAPI:
         self.client.publish(f"{self.prefix}/{robot_name}/order", json.dumps(order))
         print(f"Order published: {order}")
         self.last_order[robot_name] = {"orderId": orderId, "orderUpdateId": orderUpdateId}
-        self.last_destination_node = nodes[-1][0] if nodes else None
-        self.last_node_theta = pose[2] if nodes and not nodes[-1] == nodes[0] else None
+        self.last_destination_node[robot_name] = nodes[-1][0] if nodes else None
+        self.last_node_theta[robot_name] = pose[2] if nodes and not nodes[-1] == nodes[0] else None
         return True
 
     def get_sequence_id(self, task_id, entity_type, entity_id, base_node=False):
@@ -453,10 +453,10 @@ class RobotAPI:
     def is_command_completed(self, robot_name: str):
         if robot_name in self.state_data:
             state = self.state_data[robot_name]
+            current_node = state.get("lastNodeId")
             if not state.get("nodeStates") and not state.get("edgeStates"):
-                if self.last_destination_node is not None:
-                    current_node = state.get("lastNodeId")
-                    if current_node == self.last_destination_node:
+                if self.last_destination_node.get(robot_name) is not None:
+                    if current_node == self.last_destination_node[robot_name]:
                         return True
                 else:
                     return True
