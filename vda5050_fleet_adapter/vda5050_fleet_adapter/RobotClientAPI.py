@@ -347,15 +347,15 @@ class RobotAPI:
                 "actionId": str(uuid.uuid4()),
                 "actionType": "pick",
                 "blockingType": "HARD",
-                "parameters": {
-                    "lhd": "lhd",
-                    "stationType": "stationType",
-                    "stationName": label,
-                    "loadType": "loadType",
-                    "loadId": "loadId",
-                    "height": "height",
-                    "depth": "depth",
-                    "side": "side"
+                "actionParameters": {
+                    # "lhd": "lhd",
+                    # "stationType": "stationType",
+                    # "stationName": label,
+                    # "loadType": "loadType",
+                    # "loadId": "loadId",
+                    # "height": "height",
+                    # "depth": "depth",
+                    # "side": "side"
                 }
             }
         elif activity == "delivery_dropoff":
@@ -363,15 +363,15 @@ class RobotAPI:
                 "actionId": str(uuid.uuid4()),
                 "actionType": "drop",
                 "blockingType": "HARD",
-                "parameters": {
-                    "lhd": "lhd",
-                    "stationType": "stationType",
-                    "stationName": label,
-                    "loadType": "loadType",
-                    "loadId": "loadId",
-                    "height": "height",
-                    "depth": "depth",
-                    "side": "side"
+                "actionParameters": {
+                    # "lhd": "lhd",
+                    # "stationType": "stationType",
+                    # "stationName": label,
+                    # "loadType": "loadType",
+                    # "loadId": "loadId",
+                    # "height": "height",
+                    # "depth": "depth",
+                    # "side": "side"
                 }
             }
             
@@ -380,8 +380,8 @@ class RobotAPI:
                 "actionId": str(uuid.uuid4()),
                 "actionType": "finePositioning",
                 "blockingType": "HARD",
-                "parameters": {
-                    "stationName": label,
+                "actionParameters": {
+                    # "stationName": label,
                     #"stationType": "charging"
                 }
             }
@@ -396,8 +396,8 @@ class RobotAPI:
             "serialNumber": robot_name,
             "actions": [action]
         }
-
-        self.client.publish(f"{self.prefix}/{robot_name}/order", json.dumps(instant_action))
+        print(f"Instant action: {instant_action}")
+        self.client.publish(f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
         action_state = self.get_action_states(robot_name, task_id)
         if action_state in [1, 2, 3, 0]:
             pass

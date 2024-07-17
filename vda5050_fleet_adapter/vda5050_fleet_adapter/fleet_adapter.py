@@ -24,7 +24,7 @@ import rmf_adapter.easy_full_control as rmf_easy
 
 from .RobotClientAPI import RobotAPI, RobotAPIResult, RobotUpdateData
 from rmf_task_msgs.msg import BidResponse
-from rmf_fleet_msgs.msg import LaneRequest, ClosedLanes
+from rmf_fleet_msgs.msg import LaneRequest, ClosedLanes, ModeRequest, RobotMode
 from .adapter_utils import parse_nav_graph, compute_transforms, create_graph_from_nav, find_path, apply_transformations, transform_node, get_nearest_node, get_node_pose, compute_path_and_edges
 
 def main(argv=sys.argv):
@@ -240,12 +240,12 @@ class RobotAdapter:
             case "delivery_pickup":
                 self.attempt_cmd_until_success(
                     cmd=self.api.start_activity, args=(
-                        self.name, self.task_id, "pickup", description)
+                        self.name, self.task_id, "delivery_pickup", description)
                 )
             case "delivery_dropoff":
                 self.attempt_cmd_until_success(
                     cmd=self.api.start_activity, args=(
-                        self.name, self.task_id, "dropoff", description)
+                        self.name, self.task_id, "delivery_dropoff", description)
                 )
         return
     
@@ -294,7 +294,7 @@ class RobotAdapter:
             
             case RobotAPIResult.FAILED:
                 return False
-            
+
             # case RobotAPIResult.IMPOSSIBLE:
             #     new_goal_node = get_nearest_node(self.nodes, [destination.position[0], destination.position[1]])
             #     self.last_nodes, self.last_edges, self.current_node, self.goal_node, self.current_edge = compute_path_and_edges(
@@ -412,19 +412,24 @@ def ros_connections(node, robots, fleet_handle):
         state_msg.closed_lanes = list(closed_lanes)
         closed_lanes_pub.publish(state_msg)
 
-    # def mode_request_cb(msg):
-    #     if (
-    #         msg.fleet_name is None
-    #         or msg.fleet_name != fleet_name
-    #         or msg.robot_name is None
-    #     ):
-    #         return
+    def mode_request_cb(msg):
+        if (
+            msg.fleet_name is None
+            or msg.fleet_name != fleet_name
+            or msg.robot_name is None
+        ):
+            return
+        print(f"Received mode request for robot [{msg.robot_name}] with mode [{msg.mode.mode}]")
+        robot = robots.get(msg.robot_name)
+        if robot is None:
+            return
+        if msg.mode.mode == RobotMode.MODE_IDLE:
+            robot.finish_action()
+        elif msg.mode.mode == 10:  # Custom robot mode for Pickup execution
+            robot.execute_action("delivery_pickup", {}, None)
+        elif msg.mode.mode == 11:  # Custom robot mode for Dropoff execution
+            robot.execute_action("delivery_dropoff", {}, None)
 
-    #     if msg.mode.mode == RobotMode.MODE_IDLE:
-    #         robot = robots.get(msg.robot_name)
-    #         if robot is None:
-    #             return
-    #         robot.finish_action()
 
     lane_request_sub = node.create_subscription(
         LaneRequest,
@@ -434,10 +439,10 @@ def ros_connections(node, robots, fleet_handle):
     )
 
     def bid_response_callback(msg):
-            robot_name = msg.proposal.expected_robot_name
-            if robot_name in robots:
-                robots[robot_name].task_id = msg.task_id
-            print(f"Received bid response for robot [{robot_name}] with task_id [{msg.task_id}]")
+        robot_name = msg.proposal.expected_robot_name
+        if robot_name in robots:
+            robots[robot_name].task_id = msg.task_id
+        print(f"Received bid response for robot [{robot_name}] with task_id [{msg.task_id}]")
     
     bid_response_sub = node.create_subscription(
         BidResponse,
@@ -446,16 +451,16 @@ def ros_connections(node, robots, fleet_handle):
         qos_profile=qos_profile_system_default,
     )
 
-    # action_execution_notice_sub = node.create_subscription(
-    #     ModeRequest,
-    #     'action_execution_notice',
-    #     mode_request_cb,
-    #     qos_profile=qos_profile_system_default,
-    # )
+    action_execution_notice_sub = node.create_subscription(
+        ModeRequest,
+        'robot_mode_requests',
+        mode_request_cb,
+        qos_profile=qos_profile_system_default,
+    )
 
     return [
         lane_request_sub,
-        # action_execution_notice_sub,
+        action_execution_notice_sub,
     ]
 
 
