@@ -25,6 +25,8 @@ import rmf_adapter.easy_full_control as rmf_easy
 from .RobotClientAPI import RobotAPI, RobotAPIResult, RobotUpdateData
 from rmf_task_msgs.msg import BidResponse
 from rmf_fleet_msgs.msg import LaneRequest, ClosedLanes, ModeRequest, RobotMode
+from rmf_dispenser_msgs.msg import DispenserResult
+from rmf_ingestor_msgs.msg import IngestorResult
 from .adapter_utils import parse_nav_graph, compute_transforms, create_graph_from_nav, find_path, apply_transformations, transform_node, get_nearest_node, get_node_pose, compute_path_and_edges
 
 def main(argv=sys.argv):
@@ -90,7 +92,7 @@ def main(argv=sys.argv):
     fleet_handle = adapter.add_easy_fleet(fleet_config)
 
     fleet_mgr_yaml = config_yaml['fleet_manager']
-    api = RobotAPI(fleet_mgr_yaml)
+    api = RobotAPI(fleet_mgr_yaml, node)
 
     robots = {robot_name: RobotAdapter(robot_name, fleet_config.get_known_robot_configuration(robot_name), node, api, fleet_handle, nodes, edges, graph)
               for robot_name in fleet_config.known_robots}
@@ -166,10 +168,20 @@ class RobotAdapter:
         self.cancel_cmd_event = threading.Event()
         self.teleoperation = None
 
+        self.dispenser_result_pub = self.node.create_publisher(
+            DispenserResult, 'dispenser_results', qos_profile_system_default)
+        self.ingestor_result_pub = self.node.create_publisher(
+            IngestorResult, 'ingestor_results', qos_profile_system_default)
+
+        self.api.dispenser_result_pub = self.dispenser_result_pub
+        self.api.ingestor_result_pub = self.ingestor_result_pub
+
+
     def update(self, state, data: RobotUpdateData):
         self.position = state.position  
         activity_identifier = None
         if self.execution:
+            print(f"Checking if command is completed for robot [{self.name}]")
             if self.api.is_command_completed(self.name):
                 self.execution.finished()
                 self.execution = None
@@ -228,7 +240,7 @@ class RobotAdapter:
                 self.execution = None
                 self.api.stop(self.name)
 
-    def execute_action(self, category: str, description: dict, execution):
+    def execute_action(self, category: str, description: dict, execution, task_id):
         self.execution = execution
         self.node.get_logger().warn(f'Executing action [{category}] with description [{description}]')
         match category:
@@ -240,14 +252,14 @@ class RobotAdapter:
             case "delivery_pickup":
                 self.attempt_cmd_until_success(
                     cmd=self.api.start_activity, args=(
-                        self.name, self.task_id, "delivery_pickup", description)
+                        self.name, task_id, "delivery_pickup", description)
                 )
             case "delivery_dropoff":
                 self.attempt_cmd_until_success(
                     cmd=self.api.start_activity, args=(
-                        self.name, self.task_id, "delivery_dropoff", description)
+                        self.name, task_id, "delivery_dropoff", description)
                 )
-        return
+        # return
     
     def attempt_cmd_until_success(self, cmd, args):
         self.cancel_cmd_attempt()
@@ -366,7 +378,7 @@ def update_robot(robot: RobotAdapter):
             robot.configuration,
             robot.make_callbacks()
         )
-        robot.api.send_factsheet_request(robot.name)
+        # robot.api.send_factsheet_request(robot.name)
         return
 
     robot.update(state, data)
@@ -426,9 +438,9 @@ def ros_connections(node, robots, fleet_handle):
         if msg.mode.mode == RobotMode.MODE_IDLE:
             robot.finish_action()
         elif msg.mode.mode == 10:  # Custom robot mode for Pickup execution
-            robot.execute_action("delivery_pickup", {}, None)
+            robot.execute_action("delivery_pickup", {}, None, robots[msg.robot_name].task_id)
         elif msg.mode.mode == 11:  # Custom robot mode for Dropoff execution
-            robot.execute_action("delivery_dropoff", {}, None)
+            robot.execute_action("delivery_dropoff", {}, None, robots[msg.robot_name].task_id)
 
 
     lane_request_sub = node.create_subscription(

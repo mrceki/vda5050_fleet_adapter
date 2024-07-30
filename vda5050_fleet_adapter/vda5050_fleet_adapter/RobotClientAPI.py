@@ -6,6 +6,9 @@ from datetime import datetime
 import yaml
 import os
 import enum
+import time
+from rmf_dispenser_msgs.msg import DispenserResult
+from rmf_ingestor_msgs.msg import IngestorResult
 
 class RobotAPIResult(enum.IntEnum):
     WAITING = 0
@@ -25,7 +28,7 @@ class RobotAPIResult(enum.IntEnum):
     """Action could not be performed."""
 
 class RobotAPI:
-    def __init__(self, config_yaml):
+    def __init__(self, config_yaml, node):
         self.prefix = config_yaml['prefix']
         self.user = config_yaml['user']
         self.password = self.timeout = 5.0
@@ -39,13 +42,15 @@ class RobotAPI:
         self.client = mqtt.Client()
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
+        self.node = node 
         print("Connecting to MQTT broker")
-        self.client.connect("localhost", 1884, 60)
+        self.client.connect("localhost", 1883, 60)
         self.client.loop_start()
         self.robot_positions = {}
         self.last_node_theta = {}
         self.factsheets_folder = "factsheets"
-    
+        self.last_command = ""
+
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
             self.broker_connected = True
@@ -281,6 +286,8 @@ class RobotAPI:
 
         self.client.publish(f"{self.prefix}/{robot_name}/order", json.dumps(order))
         print(f"Order published: {order}")
+        self.last_command="navigate"
+        self.last_task = task_id
         self.last_order[robot_name] = {"orderId": orderId, "orderUpdateId": orderUpdateId}
         self.last_destination_node[robot_name] = nodes[-1][0] if nodes else None
         self.last_node_theta[robot_name] = pose[2] if nodes and not nodes[-1] == nodes[0] else None
@@ -317,74 +324,78 @@ class RobotAPI:
             return new_sequence_id
 
     def get_action_states(self, robot_name, task_id):
-        if robot_name in self.state_data and self.state_data[robot_name].get("task_id") == task_id:
-            return self.state_data[robot_name].get("actionStates", [])
-        else:
-            print(f"Robot {robot_name} not found in state data for action states")
-            return 
+        while True:
+            if robot_name in self.state_data:
+                action_status = self.state_data[robot_name].get("actionStates", [])
+                for action_state in action_status:
+                    print(f"Action state id: {action_state.get('actionId')}")
+                    print(f"Task id: {task_id}")
+                    if action_state.get("actionId") == task_id:
+                        return action_state.get("actionStatus")
+            print(f"Waiting for action states for robot {robot_name}...")
+            time.sleep(1)
 
-    def start_activity(
-        self,
-        robot_name: str,
-        task_id,
-        activity: str,
-        label: str
-    ):
-        if task_id not in self.task_orders:
+    def start_activity(self, robot_name: str, task_id, activity: str, label: str):
+        def initialize_task_order():
             orderId = str(uuid.uuid4())
-            orderUpdateId = 0
-            self.task_orders[task_id] = {"orderId": orderId, "orderUpdateId": orderUpdateId}
-            self.sequence_map[task_id] = {"nodes": {}, "edges": {}}  # Initialize hashmap for the task
-        else:
-            self.task_orders[task_id]["orderUpdateId"] += 1
-            orderId = self.task_orders[task_id]["orderId"]
-            orderUpdateId = self.task_orders[task_id]["orderUpdateId"]
-
-        print(f"Starting activity {activity} on robot {robot_name}")
-
-        if activity == "delivery_pickup":
-            action = {
-                "actionId": str(uuid.uuid4()),
-                "actionType": "pick",
-                "blockingType": "HARD",
-                "actionParameters": {
-                    # "lhd": "lhd",
-                    # "stationType": "stationType",
-                    # "stationName": label,
-                    # "loadType": "loadType",
-                    # "loadId": "loadId",
-                    # "height": "height",
-                    # "depth": "depth",
-                    # "side": "side"
-                }
+            actionId = str(uuid.uuid4())
+            self.task_orders[task_id] = {
+                "orderId": orderId,
+                "orderUpdateId": 0,
+                "actionId": actionId,
+                "activity": activity
             }
-        elif activity == "delivery_dropoff":
-            action = {
-                "actionId": str(uuid.uuid4()),
-                "actionType": "drop",
-                "blockingType": "HARD",
-                "actionParameters": {
-                    # "lhd": "lhd",
-                    # "stationType": "stationType",
-                    # "stationName": label,
-                    # "loadType": "loadType",
-                    # "loadId": "loadId",
-                    # "height": "height",
-                    # "depth": "depth",
-                    # "side": "side"
-                }
-            }
+            self.last_command = activity
+            self.publish_instant_action(robot_name, activity, actionId)
             
+        def update_task_order_with_new_action():
+            actionId = str(uuid.uuid4())
+            self.task_orders[task_id].update({
+                "actionId": actionId,
+                "activity": activity
+            })
+            self.last_command = activity
+            self.publish_instant_action(robot_name, activity, actionId)
+
+        if task_id not in self.task_orders or self.task_orders[task_id].get("activity") is None:
+            print("Starting new activity")
+            initialize_task_order()
+        elif self.task_orders[task_id]["activity"] != activity:
+            print(f"Starting new activity: {activity}")
+            update_task_order_with_new_action()
+        else:
+            print(f"Continuing task: {self.task_orders[task_id]}")
+            if "actionId" not in self.task_orders[task_id] or self.task_orders[task_id]["actionId"] is None or self.last_command != activity:
+                actionId = str(uuid.uuid4())
+                self.task_orders[task_id]["actionId"] = actionId
+            else:
+                actionId = self.task_orders[task_id]["actionId"]
+
+            action_state = self.get_action_states(robot_name, actionId)
+            if action_state in ["INITIALIZING", "RUNNING", "FINISHED"]:
+                print(f"Action state: {action_state}")
+                if action_state == "FINISHED":
+                    self.publish_result(robot_name, task_id)
+                return True
+            elif action_state == "FAILED":
+                return False
+            else:
+                return False
+
+        return True
+
+    def publish_instant_action(self, robot_name: str, activity: str, actionId: str):
+        action = {
+            "actionId": actionId,
+            "blockingType": "HARD",
+            "actionParameters": {}
+        }
+        if activity == "delivery_pickup":
+            action["actionType"] = "pick"
+        elif activity == "delivery_dropoff":
+            action["actionType"] = "drop"
         elif activity == "dock":
-            action = {
-                "actionId": str(uuid.uuid4()),
-                "actionType": "finePositioning",
-                "blockingType": "HARD",
-                "actionParameters": {
-                    # "stationName": label,
-                    #"stationType": "charging"
-                }
-            }
+            action["actionType"] = "finePositioning"
         else:
             raise ValueError(f"Unsupported activity type: {activity}")
 
@@ -396,16 +407,31 @@ class RobotAPI:
             "serialNumber": robot_name,
             "actions": [action]
         }
-        print(f"Instant action: {instant_action}")
-        self.client.publish(f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
-        action_state = self.get_action_states(robot_name, task_id)
-        if action_state in [1, 2, 3, 0]:
-            pass
-        elif action_state == 4:
-            return True
-        elif action_state == 5:
-            return False
-        return True
+
+        try:
+            self.client.publish(f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
+            print(f"Published instant action for robot {robot_name}")
+        except Exception as e:
+            print(f"Error publishing instant action: {e}")
+
+    def publish_result(self, robot_name: str, task_id):
+        if self.last_command == "delivery_pickup":
+            result_msg = DispenserResult()
+            result_msg.time = self.node.get_clock().now().to_msg()
+            result_msg.source_guid = robot_name
+            result_msg.request_guid = task_id
+            result_msg.status = DispenserResult.SUCCESS
+            self.node.get_logger().info(f"Robot {robot_name} completed dispenser task")
+            self.dispenser_result_pub.publish(result_msg)
+
+        elif self.last_command == "delivery_dropoff":
+            result_msg = IngestorResult()
+            result_msg.time = self.node.get_clock().now().to_msg()
+            result_msg.source_guid = robot_name
+            result_msg.request_guid = task_id
+            result_msg.status = IngestorResult.SUCCESS
+            self.node.get_logger().info(f"Robot {robot_name} completed ingestor task")
+            self.ingestor_result_pub.publish(result_msg)
 
     def stop(self, robot_name: str):
         stop_action = {
@@ -451,16 +477,59 @@ class RobotAPI:
             return None
 
     def is_command_completed(self, robot_name: str):
+        print(f"Checking if command is completed for robot {robot_name}")
+        print(f"Last command: {self.last_command}")
         if robot_name in self.state_data:
-            state = self.state_data[robot_name]
-            current_node = state.get("lastNodeId")
-            if not state.get("nodeStates") and not state.get("edgeStates"):
-                if self.last_destination_node.get(robot_name) is not None:
-                    if current_node == self.last_destination_node[robot_name]:
+            if self.last_command == "navigate":
+                print(f"Robot {robot_name} found in state data for action states")
+                state = self.state_data[robot_name]
+                current_node = state.get("lastNodeId")
+                if not state.get("nodeStates") and not state.get("edgeStates"):
+                    if self.last_destination_node.get(robot_name) is not None:
+                        if current_node == self.last_destination_node[robot_name]:
+                            return True
+                    else:
                         return True
-                else:
-                    return True
-            return False
+                return False
+
+            elif self.last_command in ["delivery_pickup", "delivery_dropoff"]:
+                while True:
+                    print(f"Checking action state for robot {robot_name}")
+                    action_state = self.get_action_states(robot_name, self.last_task)
+                    if action_state:
+                        print(f"Action state: {action_state}")
+                        if action_state == "FINISHED":
+                            print(f"Action state: {action_state}")
+                            
+                            result_msg = None
+                            if self.last_command == "delivery_pickup":
+                                result_msg = DispenserResult()
+                                result_msg.time = self.node.get_clock().now().to_msg()
+                                result_msg.source_guid = robot_name
+                                result_msg.request_guid = self.last_task
+                                result_msg.status = DispenserResult.SUCCESS
+                                self.node.get_logger().info(f"Robot {robot_name} completed dispenser task")
+                            
+                            elif self.last_command == "delivery_dropoff":
+                                result_msg = IngestorResult()
+                                result_msg.time = self.node.get_clock().now().to_msg()
+                                result_msg.source_guid = robot_name
+                                result_msg.request_guid = self.last_task
+                                result_msg.status = IngestorResult.SUCCESS
+                                self.node.get_logger().info(f"Robot {robot_name} completed ingestor task")
+
+                            if result_msg:
+                                if self.last_command == "delivery_pickup":
+                                    self.node.get_logger().info(f"Robot {robot_name} completed dispenser task")
+                                    self.dispenser_result_pub.publish(result_msg)
+                                elif self.last_command == "delivery_dropoff":
+                                    self.node.get_logger().info(f"Robot {robot_name} completed ingestor task")
+                                    self.ingestor_result_pub.publish(result_msg)
+
+                            return True
+                        time.sleep(1)
+                    else:
+                        pass
         else:
             print(f"Robot {robot_name} not found in state data for action states")
             return False
