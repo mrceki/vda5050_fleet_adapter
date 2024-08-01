@@ -138,10 +138,10 @@ def compute_path_and_edges(last_nodes, graph, nodes, edges, new_goal_node, posit
             last_nodes = [[node, get_node_pose(nodes, node)] for node in path]
             last_edges = [find_edge(edges, path[i], path[i + 1]) for i in range(len(path) - 1) if find_edge(edges, path[i], path[i + 1])]
             current_edge = last_edges[0] if last_edges else None
-            return last_nodes, last_edges, current_node, goal_node, current_edge
+            return last_nodes, last_edges
         else:
             last_nodes = [[current_node, get_node_pose(nodes, current_node)], [goal_node, get_node_pose(nodes, goal_node)]]
             last_edges = []
-            return last_nodes, last_edges, current_node, goal_node, None
+            return last_nodes, last_edges
 
     return last_nodes, last_edges

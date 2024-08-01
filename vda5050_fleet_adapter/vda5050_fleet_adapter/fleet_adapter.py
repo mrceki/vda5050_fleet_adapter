@@ -218,7 +218,7 @@ class RobotAdapter:
             self.attempt_cmd_until_success(self.perform_docking, (destination,))
             return
 
-        self.last_nodes, self.last_edges= compute_path_and_edges(
+        self.last_nodes, self.last_edges = compute_path_and_edges(
             self.last_nodes, self.graph, self.nodes, self.edges, new_goal_node, self.position
         )
 
