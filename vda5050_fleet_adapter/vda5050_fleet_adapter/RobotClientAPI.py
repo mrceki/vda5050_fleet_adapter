@@ -10,6 +10,7 @@ import time
 from rmf_dispenser_msgs.msg import DispenserResult
 from rmf_ingestor_msgs.msg import IngestorResult
 
+
 class RobotAPIResult(enum.IntEnum):
     WAITING = 0
     """Waiting for the trigger (passing the mode, entering the edge)"""
@@ -21,11 +22,12 @@ class RobotAPIResult(enum.IntEnum):
 
     PAUSED = 3
     """Paused by instantAction or external trigger"""
-    
+
     FINISHED = 4
 
     FAILED = 5
     """Action could not be performed."""
+
 
 class RobotAPI:
     def __init__(self, config_yaml, node):
@@ -41,7 +43,7 @@ class RobotAPI:
         self.client = mqtt.Client()
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
-        self.node = node 
+        self.node = node
         print("Connecting to MQTT broker")
         self.client.connect("localhost", 1883, 60)
         self.client.loop_start()
@@ -49,7 +51,7 @@ class RobotAPI:
         self.previous_node_theta = {}
         self.factsheet_directory = "factsheets"
         self.previous_command = {}
-        self.previous_action_id= {}
+        self.previous_action_id = {}
 
     def on_connect(self, client, userdata, flags, rc):
         if rc == 0:
@@ -88,7 +90,8 @@ class RobotAPI:
             robot_name = message.get("serialNumber")
             if robot_name:
                 self.robot_state_data[robot_name] = message
-                self.current_robot_positions[robot_name] = [message.get("agvPosition").get("x"), message.get("agvPosition").get("y"), message.get("agvPosition").get("theta")]
+                self.current_robot_positions[robot_name] = [message.get("agvPosition").get(
+                    "x"), message.get("agvPosition").get("y"), message.get("agvPosition").get("theta")]
         except json.JSONDecodeError:
             print("Error decoding JSON message")
 
@@ -98,31 +101,36 @@ class RobotAPI:
             robot_name = message.get("serialNumber")
             self.robot_visualization_data[robot_name] = message
             if robot_name:
-                self.current_robot_positions[robot_name] = [message.get("agvPosition").get("x"), message.get("agvPosition").get("y"), message.get("agvPosition").get("theta")]
+                self.current_robot_positions[robot_name] = [message.get("agvPosition").get(
+                    "x"), message.get("agvPosition").get("y"), message.get("agvPosition").get("theta")]
 
         except json.JSONDecodeError:
             print("Error decoding JSON message")
-    
+
     def handle_factsheet_message(self, payload):
+        print(f"Received factsheet message : {payload}")
         try:
             factsheet = json.loads(payload)
             serial_number = factsheet.get('serialNumber')
             if not serial_number:
                 print("Factsheet does not contain a serial number.")
                 return
-            
-            json_filename = os.path.join(self.factsheet_directory, f"{serial_number}.json")
-            yaml_filename = os.path.join(self.factsheet_directory, f"{serial_number}.yaml")
-            
+
+            json_filename = os.path.join(
+                self.factsheet_directory, f"{serial_number}.json")
+            yaml_filename = os.path.join(
+                self.factsheet_directory, f"{serial_number}.yaml")
+
             if not os.path.exists(json_filename) or not os.path.exists(yaml_filename):
                 with open(json_filename, 'w') as json_file:
                     json.dump(factsheet, json_file, indent=2)
-                
+
                 yaml_data = self.convert_factsheet_to_yaml(factsheet)
                 with open(yaml_filename, 'w') as yaml_file:
                     yaml_file.write(yaml_data)
-                
-                print(f"New factsheet saved as {json_filename} and {yaml_filename}")
+
+                print(
+                    f"New factsheet saved as {json_filename} and {yaml_filename}")
             else:
                 print(f"Factsheet for {serial_number} already exists.")
         except json.JSONDecodeError:
@@ -135,44 +143,45 @@ class RobotAPI:
                 'limits': {
                     'linear': [
                         factsheet['physicalParameters'].get('speedMax', 0.0),
-                        factsheet['physicalParameters'].get('accelerationMax', 0.0)
+                        factsheet['physicalParameters'].get(
+                            'accelerationMax', 0.0)
                     ],
-                    'angular': [0.6, 2.0]  
+                    'angular': [0.6, 2.0]
                 },
                 'profile': {
-                    'footprint': 0.3,  
-                    'vicinity': 0.5  
+                    'footprint': 0.3,
+                    'vicinity': 0.5
                 },
-                'reversible': True,  
+                'reversible': True,
                 'battery_system': {
-                    'voltage': 12.0,  
-                    'capacity': 24.0,  
-                    'charging_current': 5.0  
+                    'voltage': 12.0,
+                    'capacity': 24.0,
+                    'charging_current': 5.0
                 },
                 'mechanical_system': {
                     'mass': factsheet['typeSpecification'].get('maxLoadMass', 0.0),
-                    'moment_of_inertia': 10.0,  
-                    'friction_coefficient': 0.22  
+                    'moment_of_inertia': 10.0,
+                    'friction_coefficient': 0.22
                 },
                 'ambient_system': {
-                    'power': 20.0  
+                    'power': 20.0
                 },
                 'tool_system': {
-                    'power': 0.0  
+                    'power': 0.0
                 },
-                'recharge_threshold': 0.10,  
-                'recharge_soc': 1.0,  
-                'publish_fleet_state': 20.0,  
-                'account_for_battery_drain': True,  
+                'recharge_threshold': 0.10,
+                'recharge_soc': 1.0,
+                'publish_fleet_state': 20.0,
+                'account_for_battery_drain': True,
                 'task_capabilities': {
-                    'loop': True,  
-                    'delivery': True,  
-                    'clean': False  
+                    'loop': True,
+                    'delivery': True,
+                    'clean': False
                 },
-                'actions': ["teleop"],  
+                'actions': ["teleop"],
                 'robots': {
                     factsheet.get('serialNumber', 'UNKNOWN'): {
-                        'charger': "start"  
+                        'charger': "start"
                     }
                 }
             }
@@ -187,9 +196,9 @@ class RobotAPI:
 
     def send_factsheet_request(self, robot_name: str):
         factsheet_request_action = {
-            "actionId": str(uuid.uuid4()),  
+            "actionId": str(uuid.uuid4()),
             "actionType": "factsheetRequest",
-            #"blockingType": "SOFT",
+            # "blockingType": "SOFT",
             "actionParameters": []
         }
 
@@ -203,9 +212,10 @@ class RobotAPI:
         }
         print(f"Requesting factsheet from robot {robot_name}")
         print(f"Instant action: {instant_action}")
-        self.client.publish(f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
+        self.client.publish(
+            f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
         return True
-        
+
     def navigate(
         self,
         robot_name: str,
@@ -218,8 +228,10 @@ class RobotAPI:
         if task_id not in self.task_order_data:
             orderId = str(uuid.uuid4())
             orderUpdateId = 0
-            self.task_order_data[task_id] = {"orderId": orderId, "orderUpdateId": orderUpdateId}
-            self.sequence_id_map[task_id] = {"nodes": {}, "edges": {}}  # Initialize hashmap for the task
+            self.task_order_data[task_id] = {
+                "orderId": orderId, "orderUpdateId": orderUpdateId}
+            # Initialize hashmap for the task
+            self.sequence_id_map[task_id] = {"nodes": {}, "edges": {}}
         else:
             self.task_order_data[task_id]["orderUpdateId"] += 1
             orderId = self.task_order_data[task_id]["orderId"]
@@ -237,7 +249,8 @@ class RobotAPI:
         order_nodes = []
         for i, node in enumerate(nodes):
             if i == 0 and node[0] == self.previous_destination_node.get(robot_name):
-                node_theta = self.previous_node_theta.get(robot_name) if self.previous_node_theta.get(robot_name) is not None else pose[2]
+                node_theta = self.previous_node_theta.get(
+                    robot_name) if self.previous_node_theta.get(robot_name) is not None else pose[2]
             else:
                 node_theta = pose[2]
 
@@ -249,7 +262,8 @@ class RobotAPI:
                 "allowedDeviationXY": 0.6,
                 "allowed_deviation_theta": 3.141592653589793
             }
-            sequence_id = self.generate_sequence_id(task_id, "nodes", node[0], base_node=(i == 0))
+            sequence_id = self.generate_sequence_id(
+                task_id, "nodes", node[0], base_node=(i == 0))
             order_nodes.append({
                 "nodeId": node[0],
                 "sequenceId": sequence_id,
@@ -284,12 +298,14 @@ class RobotAPI:
             "edges": order_edges
         }
 
-        self.client.publish(f"{self.prefix}/{robot_name}/order", json.dumps(order))
+        self.client.publish(
+            f"{self.prefix}/{robot_name}/order", json.dumps(order))
         print(f"Order published: {order}")
-        self.previous_command[robot_name]="navigate"
+        self.previous_command[robot_name] = "navigate"
         self.last_task = task_id
         self.previous_destination_node[robot_name] = nodes[-1][0] if nodes else None
-        self.previous_node_theta[robot_name] = node_theta #if nodes else None#and not nodes[-1] == nodes[0] else None
+        # if nodes else None#and not nodes[-1] == nodes[0] else None
+        self.previous_node_theta[robot_name] = node_theta
         return True
 
     def generate_sequence_id(self, task_id, entity_type, entity_id, base_node=False):
@@ -311,13 +327,15 @@ class RobotAPI:
             if base_node:
                 return self.sequence_id_map[task_id][entity_type][entity_id]
             else:
-                existing_ids = list(self.sequence_id_map[task_id][entity_type].values())
+                existing_ids = list(
+                    self.sequence_id_map[task_id][entity_type].values())
                 existing_id = self.sequence_id_map[task_id][entity_type][entity_id]
                 new_sequence_id = max(existing_ids) + 2
                 self.sequence_id_map[task_id][entity_type][entity_id] = new_sequence_id
                 return new_sequence_id
         else:
-            existing_ids = list(self.sequence_id_map[task_id][entity_type].values())
+            existing_ids = list(
+                self.sequence_id_map[task_id][entity_type].values())
             new_sequence_id = max(existing_ids) + 2 if existing_ids else 0
             self.sequence_id_map[task_id][entity_type][entity_id] = new_sequence_id
             return new_sequence_id
@@ -326,9 +344,11 @@ class RobotAPI:
         start_time = time.time()
         while True:
             if robot_name in self.robot_state_data:
-                action_status = self.robot_state_data[robot_name].get("actionStates", [])
+                action_status = self.robot_state_data[robot_name].get(
+                    "actionStates", [])
                 for action_state in action_status:
-                    print(f"Action state id from robot: {action_state.get('actionId')}")
+                    print(
+                        f"Action state id from robot: {action_state.get('actionId')}")
                     print(f"Task id: {task_id}")
                     if action_state.get("actionId") == task_id:
                         return action_state.get("actionStatus")
@@ -337,10 +357,10 @@ class RobotAPI:
             if time.time() - start_time >= 20:
                 return False
 
-
     def start_activity(self, robot_name: str, task_id, activity: str, label: str):
-        self.node.get_logger().warn(f"Starting activity {activity} for robot {robot_name}!!!!!!1")
-        
+        self.node.get_logger().warn(
+            f"Starting activity {activity} for robot {robot_name}!!!!!!1")
+
         def initialize_task_order():
             orderId = str(uuid.uuid4())
             actionId = str(uuid.uuid4())
@@ -364,7 +384,6 @@ class RobotAPI:
             print(f"Starting new activityXXXXXXXXXXXXXX: {activity}")
             self.publish_instant_action(robot_name, activity, actionId)
 
-
         def update_task_order_with_new_action():
             actionId = str(uuid.uuid4())
             self.task_order_data[task_id].update({
@@ -374,7 +393,7 @@ class RobotAPI:
             self.previous_command[robot_name] = activity
             print(f"Updating new activityXXXXXXXXXXXXXX: {activity}")
             self.publish_instant_action(robot_name, activity, actionId)
-        
+
         if task_id not in self.task_order_data:
             print("Starting new activity")
             initialize_task_order()
@@ -387,10 +406,10 @@ class RobotAPI:
             update_task_order_with_new_action()
         else:
             print(f"Continuing task: {self.task_order_data[task_id]}")
-            
+
             # Get the current actionId from the task order
             actionId = self.task_order_data[task_id].get("actionId")
-            
+
             # if not actionId or self.previous_command[robot_name] != activity:
             #     # If there's no current actionId or the last command is different, create a new actionId
             #     actionId = str(uuid.uuid4())
@@ -399,10 +418,11 @@ class RobotAPI:
             #     self.publish_instant_action(robot_name, activity, actionId)
             # else:
             #     self.previous_action_id[robot_name] = actionId
-            
-            self.node.get_logger().info(f"IN START ACTIVITY {activity} FOR ROBOT {robot_name} WITH ACTION ID {actionId}")    
+
+            self.node.get_logger().info(
+                f"IN START ACTIVITY {activity} FOR ROBOT {robot_name} WITH ACTION ID {actionId}")
             action_state = self.fetch_action_states(robot_name, actionId)
-            
+
             if action_state in ["INITIALIZING", "RUNNING", "FINISHED"]:
                 print(f"Action state: {action_state}")
                 if action_state == "FINISHED":
@@ -413,7 +433,6 @@ class RobotAPI:
             else:
                 return True
         return True
-
 
     def publish_instant_action(self, robot_name: str, activity: str, actionId: str):
         action = {
@@ -440,21 +459,24 @@ class RobotAPI:
         }
 
         try:
-            self.client.publish(f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
+            self.client.publish(
+                f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
             self.previous_action_id[robot_name] = actionId
             print(f"Published instant action for robot {robot_name}")
         except Exception as e:
             print(f"Error publishing instant action: {e}")
 
     def publish_task_result(self, robot_name: str, task_id):
-        self.node.get_logger().info(f"Publishing result for robot {robot_name} with task ID {task_id} with command {self.previous_command[robot_name]}")
+        self.node.get_logger().info(
+            f"Publishing result for robot {robot_name} with task ID {task_id} with command {self.previous_command[robot_name]}")
         if self.previous_command[robot_name] == "delivery_pickup":
             result_msg = DispenserResult()
             result_msg.time = self.node.get_clock().now().to_msg()
             result_msg.source_guid = robot_name
             result_msg.request_guid = task_id
             result_msg.status = DispenserResult.SUCCESS
-            self.node.get_logger().info(f"Robot {robot_name} completed dispenser task: {task_id}")
+            self.node.get_logger().info(
+                f"Robot {robot_name} completed dispenser task: {task_id}")
             self.dispenser_result_pub.publish(result_msg)
 
         elif self.previous_command[robot_name] == "delivery_dropoff":
@@ -463,12 +485,13 @@ class RobotAPI:
             result_msg.source_guid = robot_name
             result_msg.request_guid = task_id
             result_msg.status = IngestorResult.SUCCESS
-            self.node.get_logger().info(f"Robot {robot_name} completed ingestor task {task_id}")
+            self.node.get_logger().info(
+                f"Robot {robot_name} completed ingestor task {task_id}")
             self.ingestor_result_pub.publish(result_msg)
 
     def stop(self, robot_name: str):
         stop_action = {
-            "actionId": str(uuid.uuid4()),  
+            "actionId": str(uuid.uuid4()),
             "actionType": "cancelOrder",
             "blockingType": "HARD"
         }
@@ -483,7 +506,8 @@ class RobotAPI:
         }
         print(f"Stopping robot {robot_name}")
         print(f"Instant action: {instant_action}")
-        self.client.publish(f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
+        self.client.publish(
+            f"{self.prefix}/{robot_name}/instantActions", json.dumps(instant_action))
         return True
 
     def position(self, robot_name: str):
@@ -498,7 +522,8 @@ class RobotAPI:
             state = self.robot_state_data[robot_name]
             return 1.0
         else:
-            print(f"Robot {robot_name} not found in state data for battery SOC")
+            print(
+                f"Robot {robot_name} not found in state data for battery SOC")
             return None
 
     def map(self, robot_name: str):
@@ -512,7 +537,7 @@ class RobotAPI:
     def is_command_completed(self, robot_name: str, task_id: str):
         # print(f"Checking if command is completed for robot {robot_name}")
         # print(f"Last command: {self.previous_command[robot_name]}")
-        
+
         if robot_name in self.robot_state_data:
             state = self.robot_state_data[robot_name]
             if state.get("errors"):
@@ -522,7 +547,7 @@ class RobotAPI:
                     return False, error.get("errorLevel")
 
             elif self.previous_command[robot_name] == "navigate":
-                
+
                 current_node = state.get("lastNodeId")
                 if not state.get("nodeStates") and not state.get("edgeStates"):
                     if self.previous_destination_node.get(robot_name) is not None:
@@ -535,29 +560,32 @@ class RobotAPI:
             elif self.previous_command[robot_name] in ["delivery_pickup", "delivery_dropoff"]:
                 while True:
                     # print(f"Checking action state for robot {robot_name}")
-                    action_state = self.fetch_action_states(robot_name, self.previous_action_id[robot_name])
+                    action_state = self.fetch_action_states(
+                        robot_name, self.previous_action_id[robot_name])
                     if action_state:
                         print(f"Action state: {action_state}")
                         if action_state == "FINISHED":
                             print(f"Action state: {action_state}")
-                            
+
                             result_msg = None
                             if self.previous_command[robot_name] == "delivery_pickup":
                                 result_msg = DispenserResult()
                                 result_msg.time = self.node.get_clock().now().to_msg()
                                 result_msg.source_guid = robot_name
-                                result_msg.request_guid = task_id #self.last_task
+                                result_msg.request_guid = task_id  # self.last_task
                                 result_msg.status = DispenserResult.SUCCESS
                                 self.dispenser_result_pub.publish(result_msg)
-                                self.node.get_logger().info(f"Robot {robot_name} completed dispenser task")
+                                self.node.get_logger().info(
+                                    f"Robot {robot_name} completed dispenser task")
                             elif self.previous_command[robot_name] == "delivery_dropoff":
                                 result_msg = IngestorResult()
                                 result_msg.time = self.node.get_clock().now().to_msg()
                                 result_msg.source_guid = robot_name
-                                result_msg.request_guid = task_id# self.last_task
+                                result_msg.request_guid = task_id  # self.last_task
                                 result_msg.status = IngestorResult.SUCCESS
                                 self.ingestor_result_pub.publish(result_msg)
-                                self.node.get_logger().info(f"Robot {robot_name} completed ingestor task")
+                                self.node.get_logger().info(
+                                    f"Robot {robot_name} completed ingestor task")
 
                             # if result_msg:
                             #     if self.previous_command[robot_name] == "delivery_pickup":
@@ -572,9 +600,9 @@ class RobotAPI:
                     else:
                         pass
         else:
-            print(f"Robot {robot_name} not found in state data for action states")
+            print(
+                f"Robot {robot_name} not found in state data for action states")
             return False, None
-
 
     def get_data(self, robot_name: str):
         map = self.map(robot_name)

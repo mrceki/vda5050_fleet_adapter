@@ -4,10 +4,11 @@ import networkx as nx
 import nudged
 from rmf_adapter import Transformation
 
+
 def parse_nav_graph(nav_graph_path):
     with open(nav_graph_path, "r") as f:
         nav_graph = yaml.safe_load(f)
-    
+
     nodes = {}
     for i, vertex in enumerate(nav_graph['levels']['L1']['vertices']):
         name = vertex[2].get('name', f'node{i}')
@@ -19,12 +20,15 @@ def parse_nav_graph(nav_graph_path):
         end_node = list(nodes.keys())[lane[1]]
         # Create an edge for the direction from start_node to end_node
         edge_name = f'edge{i}_a'
-        edges[edge_name] = {'start': start_node, 'end': end_node, 'attributes': lane[2]}
+        edges[edge_name] = {'start': start_node,
+                            'end': end_node, 'attributes': lane[2]}
         # Create an edge for the direction from end_node to start_node
         edge_name = f'edge{i}_b'
-        edges[edge_name] = {'start': end_node, 'end': start_node, 'attributes': lane[2]}
-    
+        edges[edge_name] = {'start': end_node,
+                            'end': start_node, 'attributes': lane[2]}
+
     return nodes, edges
+
 
 def compute_transforms(level, coords, node=None):
     """Get transforms between RMF and robot coordinates."""
@@ -33,32 +37,38 @@ def compute_transforms(level, coords, node=None):
     tf = nudged.estimate(rmf_coords, robot_coords)
     if node:
         mse = nudged.estimate_error(tf, rmf_coords, robot_coords)
-        node.get_logger().info(f"Transformation error estimate for {level}: {mse}")
+        node.get_logger().info(
+            f"Transformation error estimate for {level}: {mse}")
     print(f"Rotation: {tf.get_rotation()}")
     print(f"Scale: {tf.get_scale()}")
     print(f"Translation: {tf.get_translation()}")
     return Transformation(tf.get_rotation(), tf.get_scale(), tf.get_translation())
 
+
 def distance(p1, p2):
     return math.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+
 
 def create_graph_from_nav(nodes, edges):
     graph = nx.Graph()
     for edge_name, edge in edges.items():
         start_node = edge['start']
         end_node = edge['end']
-        weight = distance((nodes[start_node]['x'], nodes[start_node]['y']), 
+        weight = distance((nodes[start_node]['x'], nodes[start_node]['y']),
                           (nodes[end_node]['x'], nodes[end_node]['y']))
         graph.add_edge(start_node, end_node, weight=weight)
     return graph
 
+
 def find_path(graph, start, goal):
     try:
-        path = nx.shortest_path(graph, source=start, target=goal, weight='weight')
+        path = nx.shortest_path(graph, source=start,
+                                target=goal, weight='weight')
         return path
     except nx.NetworkXNoPath:
         return None
-    
+
+
 def transform_node(x, y, rotation, scale, translation):
     # Apply rotation
     cos_theta = math.cos(rotation)
@@ -76,6 +86,7 @@ def transform_node(x, y, rotation, scale, translation):
 
     return x_transformed, y_transformed
 
+
 def apply_transformations(nodes, rotation, scale, translation):
     for name, node in nodes.items():
         x_transformed, y_transformed = transform_node(
@@ -83,6 +94,7 @@ def apply_transformations(nodes, rotation, scale, translation):
         node['x'] = x_transformed
         node['y'] = y_transformed
         print(f"Transformed node {name}: x={x_transformed}, y={y_transformed}")
+
 
 def get_nearest_node(nodes, position):
     nearest_node = None
@@ -95,15 +107,18 @@ def get_nearest_node(nodes, position):
             nearest_node = name
     return nearest_node
 
+
 def get_node_pose(nodes, node):
     """Returns the (x, y) position of the node."""
     return (nodes[node]['x'], nodes[node]['y'])
+
 
 def find_edge(edges, start_node, end_node):
     for edge_name, edge in edges.items():
         if edge['start'] == start_node and edge['end'] == end_node:
             return edge_name
     return None
+
 
 def compute_path_and_edges(last_nodes, graph, nodes, edges, new_goal_node, position):
     """
@@ -127,7 +142,8 @@ def compute_path_and_edges(last_nodes, graph, nodes, edges, new_goal_node, posit
 
         if path:
             last_nodes = [[node, get_node_pose(nodes, node)] for node in path]
-            last_edges = [find_edge(edges, path[i], path[i + 1]) for i in range(len(path) - 1) if find_edge(edges, path[i], path[i + 1])]
+            last_edges = [find_edge(edges, path[i], path[i + 1]) for i in range(
+                len(path) - 1) if find_edge(edges, path[i], path[i + 1])]
             return last_nodes, last_edges
     else:
         current_node = get_nearest_node(nodes, position)
@@ -136,11 +152,13 @@ def compute_path_and_edges(last_nodes, graph, nodes, edges, new_goal_node, posit
 
         if path:
             last_nodes = [[node, get_node_pose(nodes, node)] for node in path]
-            last_edges = [find_edge(edges, path[i], path[i + 1]) for i in range(len(path) - 1) if find_edge(edges, path[i], path[i + 1])]
+            last_edges = [find_edge(edges, path[i], path[i + 1]) for i in range(
+                len(path) - 1) if find_edge(edges, path[i], path[i + 1])]
             current_edge = last_edges[0] if last_edges else None
             return last_nodes, last_edges
         else:
-            last_nodes = [[current_node, get_node_pose(nodes, current_node)], [goal_node, get_node_pose(nodes, goal_node)]]
+            last_nodes = [[current_node, get_node_pose(nodes, current_node)], [
+                goal_node, get_node_pose(nodes, goal_node)]]
             last_edges = []
             return last_nodes, last_edges
 

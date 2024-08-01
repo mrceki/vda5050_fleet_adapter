@@ -29,6 +29,7 @@ from rmf_dispenser_msgs.msg import DispenserResult
 from rmf_ingestor_msgs.msg import IngestorResult
 from .adapter_utils import parse_nav_graph, compute_transforms, create_graph_from_nav, find_path, apply_transformations, transform_node, get_nearest_node, get_node_pose, compute_path_and_edges
 
+
 def main(argv=sys.argv):
     rclpy.init(args=argv)
     rmf_adapter.init_rclcpp()
@@ -88,7 +89,7 @@ def main(argv=sys.argv):
         tf = compute_transforms(level, coords, node)
         fleet_config.add_robot_coordinates_transformation(level, tf)
         apply_transformations(nodes, tf.rotation, tf.scale, tf.translation)
-        
+
     fleet_handle = adapter.add_easy_fleet(fleet_config)
 
     fleet_mgr_yaml = config_yaml['fleet_manager']
@@ -157,7 +158,7 @@ class RobotAdapter:
         self.nodes = nodes
         self.edges = edges
         self.graph = graph
-        self.task_id = None  
+        self.task_id = None
         self.current_node = None
         self.goal_node = None
         self.current_edge = None
@@ -180,17 +181,19 @@ class RobotAdapter:
         self.api.ingestor_result_pub = self.ingestor_result_pub
 
     def update(self, state, data: RobotUpdateData):
-        self.position = state.position  
+        self.position = state.position
         activity_identifier = None
         if self.execution:
             # print(f"Checking if command is completed for robot [{self.name}]")
-            status, error_level = self.api.is_command_completed(self.name, self.task_queue[0])
+            status, error_level = self.api.is_command_completed(
+                self.name, self.task_queue[0])
             if status:
                 self.execution.finished()
                 self.execution = None
             else:
                 if error_level == "WARNING" or error_level == "FATAL":
-                    self.node.get_logger().error(f"Error level for robot {self.name}: {error_level}")
+                    self.node.get_logger().error(
+                        f"Error level for robot {self.name}: {error_level}")
                     self.execution = None
                     self.api.stop(self.name)
                 activity_identifier = self.execution.identifier if self.execution else None
@@ -211,11 +214,14 @@ class RobotAdapter:
 
     def navigate(self, destination, execution):
         self.execution = execution
-        new_goal_node = get_nearest_node(self.nodes, [destination.position[0], destination.position[1]])
-        self.node.get_logger().warn(f"Is that docking station? {destination.dock}")
-        
+        new_goal_node = get_nearest_node(
+            self.nodes, [destination.position[0], destination.position[1]])
+        self.node.get_logger().warn(
+            f"Is that docking station? {destination.dock}")
+
         if destination.dock is not None:
-            self.attempt_cmd_until_success(self.perform_docking, (destination,))
+            self.attempt_cmd_until_success(
+                self.perform_docking, (destination,))
             return
 
         self.last_nodes, self.last_edges = compute_path_and_edges(
@@ -249,16 +255,20 @@ class RobotAdapter:
 
     def execute_action(self, category: str, description: dict, execution, task_id):
         self.execution = execution
-        self.node.get_logger().warn(f'Executing action [{category}] with description [{description}]')
+        self.node.get_logger().warn(
+            f'Executing action [{category}] with description [{description}]')
         if task_id in self.task_queue:
             if not task_id == self.task_queue[0]:
                 while task_id != self.task_queue[0]:
-                    self.node.get_logger().warn(f'Task id if: {task_id} while queue: {self.task_queue[0]}')
+                    self.node.get_logger().warn(
+                        f'Task id if: {task_id} while queue: {self.task_queue[0]}')
                     self.task_queue.pop(0)
         else:
-            self.node.get_logger().warn(f'Robot [{self.name}] is not assigned to task [{task_id}]')
+            self.node.get_logger().warn(
+                f'Robot [{self.name}] is not assigned to task [{task_id}]')
             self.task_queue.append(task_id)
-            self.node.get_logger().warn(f'Robot [{self.name}] is assigned to task [{task_id}]')
+            self.node.get_logger().warn(
+                f'Robot [{self.name}] is assigned to task [{task_id}]')
             return
         match category:
             # case "teleop":
@@ -276,7 +286,7 @@ class RobotAdapter:
                     cmd=self.api.start_activity, args=(
                         self.name, task_id, "delivery_dropoff", description)
                 )
-    
+
     def attempt_cmd_until_success(self, cmd, args):
         self.cancel_cmd_attempt()
 
@@ -300,7 +310,8 @@ class RobotAdapter:
         self.cancel_cmd_event.clear()
 
     def perform_docking(self, destination):
-        self.node.get_logger().info(f'Performing docking for robot [{self.name}]')
+        self.node.get_logger().info(
+            f'Performing docking for robot [{self.name}]')
         match self.api.start_activity(
             self.name,
             self.task_queue[0],
@@ -313,13 +324,13 @@ class RobotAdapter:
                 pass
             case(RobotAPIResult.RUNNING):
                 pass
-            
+
             case(RobotAPIResult.FINISHED, path):
-                self.override= self.execution.override_schedule(
+                self.override = self.execution.override_schedule(
                     path["map_name"], path["path"]
                 )
                 return True
-            
+
             case RobotAPIResult.FAILED:
                 return False
 
@@ -368,6 +379,7 @@ class RobotAdapter:
 #                 )
 #                 self.last_position = data.position
 
+
 def parallel(f):
     def run_in_parallel(*args, **kwargs):
         return asyncio.get_event_loop().run_in_executor(
@@ -375,6 +387,7 @@ def parallel(f):
         )
 
     return run_in_parallel
+
 
 @parallel
 def update_robot(robot: RobotAdapter):
@@ -398,7 +411,8 @@ def update_robot(robot: RobotAdapter):
         return
 
     robot.update(state, data)
-    
+
+
 def ros_connections(node, robots, fleet_handle):
     fleet_name = fleet_handle.more().fleet_name
 
@@ -447,7 +461,8 @@ def ros_connections(node, robots, fleet_handle):
             or msg.robot_name is None
         ):
             return
-        print(f"Received mode request for robot [{msg.robot_name}] with mode [{msg.mode.mode}]")
+        print(
+            f"Received mode request for robot [{msg.robot_name}] with mode [{msg.mode.mode}]")
         robot = robots.get(msg.robot_name)
         if robot is None:
             return
@@ -457,7 +472,6 @@ def ros_connections(node, robots, fleet_handle):
             robot.execute_action("delivery_pickup", {}, None, msg.task_id)
         elif msg.mode.mode == 11:  # Custom robot mode for Dropoff execution
             robot.execute_action("delivery_dropoff", {}, None, msg.task_id)
-
 
     lane_request_sub = node.create_subscription(
         LaneRequest,
@@ -470,9 +484,10 @@ def ros_connections(node, robots, fleet_handle):
         robot_name = msg.proposal.expected_robot_name
         if robot_name in robots:
             robots[robot_name].task_queue.append(msg.task_id)
-            
-        print(f"Received bid response for robot [{robot_name}] with task_id [{msg.task_id}]")
-        
+
+        print(
+            f"Received bid response for robot [{robot_name}] with task_id [{msg.task_id}]")
+
     bid_response_sub = node.create_subscription(
         BidResponse,
         '/rmf_task/bid_response',
@@ -485,11 +500,13 @@ def ros_connections(node, robots, fleet_handle):
             if robot.task_id in robots[robot.name].task_queue and robot.task_id != robots[robot.name].task_queue[0]:
                 while robot.task_id != robots[robot.name].task_queue[0]:
                     robots[robot.name].task_queue.pop(0)
-                    print(f"Robot [{robot.name}] is not assigned to task [{robot.task_id}]")
+                    print(
+                        f"Robot [{robot.name}] is not assigned to task [{robot.task_id}]")
             elif robot.task_id is not None and robot.task_id not in robots[robot.name].task_queue:
-                if robot.task_id !="":
+                if robot.task_id != "":
                     robots[robot.name].task_queue.append(robot.task_id)
-                    print(f"Robot [{robot.name}] is assigned to task [{robot.task_id}]")
+                    print(
+                        f"Robot [{robot.name}] is assigned to task [{robot.task_id}]")
             else:
                 continue
 
@@ -498,7 +515,7 @@ def ros_connections(node, robots, fleet_handle):
         '/fleet_states',
         fleet_states_callback,
         qos_profile=qos_profile_system_default,
-    ) 
+    )
 
     action_execution_notice_sub = node.create_subscription(
         ModeRequest,
