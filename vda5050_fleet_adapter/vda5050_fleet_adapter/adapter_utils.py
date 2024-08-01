@@ -105,13 +105,11 @@ def find_edge(edges, start_node, end_node):
             return edge_name
     return None
 
-def compute_path_and_edges(task_id, last_task_id, last_nodes, graph, nodes, edges, new_goal_node, position):
+def compute_path_and_edges(last_nodes, graph, nodes, edges, new_goal_node, position):
     """
     Compute the path and edges for the robot based on the current and goal nodes.
 
     Args:
-        task_id (str): Current task ID.
-        last_task_id (str): Last task ID.
         last_nodes (list): List of last nodes.
         graph (networkx.Graph): Navigation graph.
         nodes (dict): Dictionary of nodes with their attributes.
@@ -121,7 +119,7 @@ def compute_path_and_edges(task_id, last_task_id, last_nodes, graph, nodes, edge
     Returns:
         tuple: Updated last nodes, last edges, current node, goal node, and current edge.
     """
-    if task_id == last_task_id and last_nodes:
+    if last_nodes:
         base_node = last_nodes[-1][0]  # Extract the node name
         print(f'Base node: {base_node}')
         print(f'New goal node: {new_goal_node}')
@@ -130,7 +128,7 @@ def compute_path_and_edges(task_id, last_task_id, last_nodes, graph, nodes, edge
         if path:
             last_nodes = [[node, get_node_pose(nodes, node)] for node in path]
             last_edges = [find_edge(edges, path[i], path[i + 1]) for i in range(len(path) - 1) if find_edge(edges, path[i], path[i + 1])]
-            return last_nodes, last_edges, None, None, None
+            return last_nodes, last_edges
     else:
         current_node = get_nearest_node(nodes, position)
         goal_node = new_goal_node
@@ -146,4 +144,4 @@ def compute_path_and_edges(task_id, last_task_id, last_nodes, graph, nodes, edge
             last_edges = []
             return last_nodes, last_edges, current_node, goal_node, None
 
-    return last_nodes, last_edges, None, None, None
+    return last_nodes, last_edges

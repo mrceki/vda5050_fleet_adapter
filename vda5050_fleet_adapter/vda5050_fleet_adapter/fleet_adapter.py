@@ -24,7 +24,7 @@ import rmf_adapter.easy_full_control as rmf_easy
 
 from .RobotClientAPI import RobotAPI, RobotAPIResult, RobotUpdateData
 from rmf_task_msgs.msg import BidResponse
-from rmf_fleet_msgs.msg import LaneRequest, ClosedLanes, ModeRequest, RobotMode
+from rmf_fleet_msgs.msg import LaneRequest, ClosedLanes, ModeRequest, RobotMode, FleetState
 from rmf_dispenser_msgs.msg import DispenserResult
 from rmf_ingestor_msgs.msg import IngestorResult
 from .adapter_utils import parse_nav_graph, compute_transforms, create_graph_from_nav, find_path, apply_transformations, transform_node, get_nearest_node, get_node_pose, compute_path_and_edges
@@ -94,7 +94,7 @@ def main(argv=sys.argv):
     fleet_mgr_yaml = config_yaml['fleet_manager']
     api = RobotAPI(fleet_mgr_yaml, node)
 
-    robots = {robot_name: RobotAdapter(robot_name, fleet_config.get_known_robot_configuration(robot_name), node, api, fleet_handle, nodes, edges, graph)
+    robots = {robot_name: RobotAdapter(robot_name, fleet_config.get_known_robot_configuration(robot_name), node, api, fleet_handle, nodes, edges, graph, task_queue=[])
               for robot_name in fleet_config.known_robots}
 
     update_period = 1.0/config_yaml['rmf_fleet'].get(
@@ -144,7 +144,8 @@ class RobotAdapter:
         fleet_handle,
         nodes,
         edges,
-        graph
+        graph,
+        task_queue
     ):
         self.name = name
         self.execution = None
@@ -167,26 +168,32 @@ class RobotAdapter:
         self.issue_cmd_thread = None
         self.cancel_cmd_event = threading.Event()
         self.teleoperation = None
+        self.task_queue = task_queue
 
         self.dispenser_result_pub = self.node.create_publisher(
             DispenserResult, 'dispenser_results', qos_profile_system_default)
         self.ingestor_result_pub = self.node.create_publisher(
             IngestorResult, 'ingestor_results', qos_profile_system_default)
 
+        # Pass the publishers to the RobotAPI instance
         self.api.dispenser_result_pub = self.dispenser_result_pub
         self.api.ingestor_result_pub = self.ingestor_result_pub
-
 
     def update(self, state, data: RobotUpdateData):
         self.position = state.position  
         activity_identifier = None
         if self.execution:
-            print(f"Checking if command is completed for robot [{self.name}]")
-            if self.api.is_command_completed(self.name):
+            # print(f"Checking if command is completed for robot [{self.name}]")
+            status, error_level = self.api.is_command_completed(self.name, self.task_queue[0])
+            if status:
                 self.execution.finished()
                 self.execution = None
             else:
-                activity_identifier = self.execution.identifier
+                if error_level == "WARNING" or error_level == "FATAL":
+                    self.node.get_logger().error(f"Error level for robot {self.name}: {error_level}")
+                    self.execution = None
+                    self.api.stop(self.name)
+                activity_identifier = self.execution.identifier if self.execution else None
         # if self.teleoperation is not None:
         #     self.teleoperation.update(data)
         self.update_handle.update(state, activity_identifier)
@@ -211,14 +218,14 @@ class RobotAdapter:
             self.attempt_cmd_until_success(self.perform_docking, (destination,))
             return
 
-        self.last_nodes, self.last_edges, self.current_node, self.goal_node, self.current_edge = compute_path_and_edges(
-            self.task_id, self.last_task_id, self.last_nodes, self.graph, self.nodes, self.edges, new_goal_node, self.position
+        self.last_nodes, self.last_edges= compute_path_and_edges(
+            self.last_nodes, self.graph, self.nodes, self.edges, new_goal_node, self.position
         )
 
         self.node.get_logger().info(
             f'Commanding [{self.name}] to navigate to {destination.position} '
-            f'on map [{destination.map}] with task_id [{self.task_id}]'
-            f' from current node [{self.current_node}] to goal node [{self.goal_node}] '
+            f'on map [{destination.map}] with task_id [{self.task_queue[0]}]'
+            f' from nodes [{self.last_nodes}]'
             f'via edges [{self.last_edges}]'
         )
 
@@ -229,7 +236,7 @@ class RobotAdapter:
                 destination.position,
                 destination.map,
                 destination.speed_limit,
-                self.task_id,
+                self.task_queue[0],
                 self.last_nodes, self.last_edges
             ),
         )
@@ -243,6 +250,16 @@ class RobotAdapter:
     def execute_action(self, category: str, description: dict, execution, task_id):
         self.execution = execution
         self.node.get_logger().warn(f'Executing action [{category}] with description [{description}]')
+        if task_id in self.task_queue:
+            if not task_id == self.task_queue[0]:
+                while task_id != self.task_queue[0]:
+                    self.node.get_logger().warn(f'Task id if: {task_id} while queue: {self.task_queue[0]}')
+                    self.task_queue.pop(0)
+        else:
+            self.node.get_logger().warn(f'Robot [{self.name}] is not assigned to task [{task_id}]')
+            self.task_queue.append(task_id)
+            self.node.get_logger().warn(f'Robot [{self.name}] is assigned to task [{task_id}]')
+            return
         match category:
             # case "teleop":
             #     self.teleoperation = Teleoperation(execution)
@@ -259,7 +276,6 @@ class RobotAdapter:
                     cmd=self.api.start_activity, args=(
                         self.name, task_id, "delivery_dropoff", description)
                 )
-        # return
     
     def attempt_cmd_until_success(self, cmd, args):
         self.cancel_cmd_attempt()
@@ -287,7 +303,7 @@ class RobotAdapter:
         self.node.get_logger().info(f'Performing docking for robot [{self.name}]')
         match self.api.start_activity(
             self.name,
-            self.task_id,
+            self.task_queue[0],
             "dock",
             destination.dock,
         ):
@@ -438,9 +454,9 @@ def ros_connections(node, robots, fleet_handle):
         if msg.mode.mode == RobotMode.MODE_IDLE:
             robot.finish_action()
         elif msg.mode.mode == 10:  # Custom robot mode for Pickup execution
-            robot.execute_action("delivery_pickup", {}, None, robots[msg.robot_name].task_id)
+            robot.execute_action("delivery_pickup", {}, None, msg.task_id)
         elif msg.mode.mode == 11:  # Custom robot mode for Dropoff execution
-            robot.execute_action("delivery_dropoff", {}, None, robots[msg.robot_name].task_id)
+            robot.execute_action("delivery_dropoff", {}, None, msg.task_id)
 
 
     lane_request_sub = node.create_subscription(
@@ -453,15 +469,36 @@ def ros_connections(node, robots, fleet_handle):
     def bid_response_callback(msg):
         robot_name = msg.proposal.expected_robot_name
         if robot_name in robots:
-            robots[robot_name].task_id = msg.task_id
+            robots[robot_name].task_queue.append(msg.task_id)
+            
         print(f"Received bid response for robot [{robot_name}] with task_id [{msg.task_id}]")
-    
+        
     bid_response_sub = node.create_subscription(
         BidResponse,
         '/rmf_task/bid_response',
         bid_response_callback,
         qos_profile=qos_profile_system_default,
     )
+
+    def fleet_states_callback(msg):
+        for robot in msg.robots:
+            if robot.task_id in robots[robot.name].task_queue and robot.task_id != robots[robot.name].task_queue[0]:
+                while robot.task_id != robots[robot.name].task_queue[0]:
+                    robots[robot.name].task_queue.pop(0)
+                    print(f"Robot [{robot.name}] is not assigned to task [{robot.task_id}]")
+            elif robot.task_id is not None and robot.task_id not in robots[robot.name].task_queue:
+                if robot.task_id !="":
+                    robots[robot.name].task_queue.append(robot.task_id)
+                    print(f"Robot [{robot.name}] is assigned to task [{robot.task_id}]")
+            else:
+                continue
+
+    fleet_states_sub = node.create_subscription(
+        FleetState,
+        '/fleet_states',
+        fleet_states_callback,
+        qos_profile=qos_profile_system_default,
+    ) 
 
     action_execution_notice_sub = node.create_subscription(
         ModeRequest,
