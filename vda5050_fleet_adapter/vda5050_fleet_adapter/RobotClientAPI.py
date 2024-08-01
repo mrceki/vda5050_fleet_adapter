@@ -329,7 +329,6 @@ class RobotAPI:
             else:
                 existing_ids = list(
                     self.sequence_id_map[task_id][entity_type].values())
-                existing_id = self.sequence_id_map[task_id][entity_type][entity_id]
                 new_sequence_id = max(existing_ids) + 2
                 self.sequence_id_map[task_id][entity_type][entity_id] = new_sequence_id
                 return new_sequence_id
@@ -519,7 +518,7 @@ class RobotAPI:
 
     def battery_soc(self, robot_name: str):
         if robot_name in self.robot_state_data:
-            state = self.robot_state_data[robot_name]
+            # state = self.robot_state_data[robot_name]
             return 1.0
         else:
             print(

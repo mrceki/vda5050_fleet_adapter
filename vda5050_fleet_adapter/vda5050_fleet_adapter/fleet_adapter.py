@@ -5,7 +5,6 @@ import time
 import threading
 import asyncio
 import math
-import networkx as nx
 
 import rclpy
 import rclpy.node
